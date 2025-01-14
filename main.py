@@ -34,11 +34,10 @@ def main(mode):
     n_epochs = 10
     alpha = 0.0003
     n_games = 300  # Number of episodes
-    n_features = len(env.features)
+    n_stocks = env.n_stocks
+    n_features = env.observation_space.shape[0]
     agent = Agent(
-        data,
-        n_features,
-        n_actions=env.action_space.shape[0],  # Number of continuous actions (number of stocks)
+        n_actions=n_stocks,  # Number of continuous actions (number of stocks)
         input_dims=n_features,  # Observation space shape
         alpha=alpha,
         batch_size=batch_size,

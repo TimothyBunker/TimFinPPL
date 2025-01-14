@@ -189,7 +189,7 @@ class CriticNetwork(nn.Module):
 # Saves data to PPOMemory
 # Iterates over the available batches each game
 class Agent:
-    def __init__(self, data, n_features, n_actions, input_dims, gamma=0.99, alpha=0.0003, gae_lambda=0.95,
+    def __init__(self, n_actions, input_dims, gamma=0.99, alpha=0.0003, gae_lambda=0.95,
                  policy_clip=0.2, batch_size=64, N=2048, n_epochs=10):
 
         # Discount factor
@@ -198,8 +198,8 @@ class Agent:
         # allows for explanation without going too far off policy
         self.policy_clip = policy_clip
 
-        self.n_stocks = len(data["Ticker"].unique())
-        self.n_features = 19
+        self.n_stocks = n_actions
+        self.n_features = input_dims
 
         # number of iteration over batches
         self.n_epochs = n_epochs
