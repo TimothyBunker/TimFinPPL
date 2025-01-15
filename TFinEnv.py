@@ -24,11 +24,11 @@ class CustomTradingEnv(gym.Env):
 
         # Load and preprocess data
         self.data = data  # Replace with your dataset
-        self.current_step = 0
 
         # Define other variables
         self.lookback_window = kwargs.get("lookback_window", 50)  # Placeholder for lookback window size
         self.done = False
+        self.current_step = self.lookback_window + 1
 
         self.n_stocks = data["Ticker"].nunique()
         self.features = ["High", "Low", "Open", "Close", "Volume", "MA50",
@@ -42,11 +42,15 @@ class CustomTradingEnv(gym.Env):
         self.portfolio_value = self.balance
         self.held_shares = np.zeros(self.n_stocks)
         self.portfolio_weights = np.zeros(self.n_stocks)
+        self.portfolio_features = np.repeat(self.portfolio_value, self.n_stocks).reshape(self.n_stocks, 1)
 
         self.action_space = spaces.Box(low=0, high=1, shape=(self.n_stocks,), dtype=np.float32)
-        market_feature_dim = self.lookback_window * self.n_stocks * len(self.features)
-        portfolio_feature_dim = self.n_stocks + 1 + self.n_stocks  # Weights, portfolio value, held shares
-        observation_dim = market_feature_dim + portfolio_feature_dim
+
+        market_feature_dim =  self.n_stocks * len(self.features)
+        portfolio_feature_dim = len(self.portfolio_features)
+        aggregate_lookback_dim = self.n_stocks * 2
+        observation_dim = market_feature_dim + portfolio_feature_dim + aggregate_lookback_dim
+
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(observation_dim,), dtype=np.float32)
 
     def reset(self):
@@ -55,17 +59,14 @@ class CustomTradingEnv(gym.Env):
         self.portfolio_value = self.initial_balance
         self.held_shares = np.zeros(self.n_stocks)
         self.portfolio_weights = np.zeros(self.n_stocks)
-        self.current_step = max(self.lookback_window, 1)
+        self.current_step = self.lookback_window + 1
         self.done = False
 
-        recent_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").iloc[
-                        self.current_step - self.lookback_window: self.current_step
-                        ].T.values
+        current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
+            columns=self.data["Ticker"].unique()).iloc[
+            self.current_step].values
 
-        if recent_prices.shape[0] != self.n_stocks:
-            recent_prices = recent_prices.reshape(-1, self.lookback_window)
-
-        edge_index = self.compute_edge_index(stock_prices=recent_prices)
+        edge_index = self.compute_edge_index(stock_prices=current_prices)
 
         observation = self._get_observation()  # Ensure this is flattened in `_get_observation()`
         return observation, edge_index
@@ -78,7 +79,9 @@ class CustomTradingEnv(gym.Env):
             portfolio_features (np.array): The portfolio features.
         """
         # Get current prices
-        current_prices = self.data["Close"].iloc[self.current_step]
+        current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
+            columns=self.data["Ticker"].unique()).iloc[
+            self.current_step].values
 
         # Update portfolio value
         self.portfolio_value = np.sum(self.held_shares * current_prices)
@@ -89,14 +92,16 @@ class CustomTradingEnv(gym.Env):
             self.portfolio_weights = np.zeros(self.n_stocks)
             self.portfolio_value = self.balance
 
-        # Create portfolio features array
-        portfolio_features = np.concatenate([
-            self.portfolio_weights,  # Shape: (n_tickers,)
-            [self.portfolio_value],  # Shape: (1,)
-            self.held_shares  # Shape: (n_tickers,)
-        ])
+        # # Create portfolio features array
+        # portfolio_features = np.concatenate([
+        #     self.portfolio_weights,  # Shape: (n_tickers,)
+        #     [self.portfolio_value],  # Shape: (1,)
+        #     self.held_shares  # Shape: (n_tickers,)
+        # ])
 
-        return portfolio_features
+        self.portfolio_features = np.repeat(self.portfolio_value, self.n_stocks).reshape(self.n_stocks, 1)
+
+        return self.portfolio_features
 
     def compute_edge_index(self, correlation_threshold=0.8, stock_prices=None):
         """
@@ -139,7 +144,8 @@ class CustomTradingEnv(gym.Env):
             action = action / np.sum(action)
 
         # Get current prices
-        current_prices = self.data["Close"].iloc[self.current_step]
+        current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
+            columns=self.data["Ticker"].unique()).iloc[self.current_step].values
 
         # Calculate old portfolio value
         old_portfolio_value = self.portfolio_value
@@ -155,8 +161,9 @@ class CustomTradingEnv(gym.Env):
         # Update held shares
         self.held_shares += shares_to_trade
 
+        # If shit fucks up try commenting out this at least once
         # Update portfolio-related features
-        portfolio_features = self._calculate_portfolio_features()
+        self.portfolio_features = self._calculate_portfolio_features()
 
         # Calculate reward
         reward = (self.portfolio_value - old_portfolio_value) / old_portfolio_value
