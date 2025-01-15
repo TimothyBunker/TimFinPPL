@@ -10,7 +10,7 @@ def main(mode):
     if mode == "train":
         print("Training Mode")
 
-        data = pd.read_parquet('enriched_stock_data_with_sentiment_training.parquet')
+        data = pd.read_parquet('./PPL/enriched_stock_data_with_sentiment_training.parquet')
         print(f"Loaded DataFrame shape: {data.shape}")
 
     elif mode == "test":

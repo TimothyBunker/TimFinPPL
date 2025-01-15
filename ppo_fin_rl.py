@@ -21,7 +21,7 @@ class PPOMemory:
         self.actions = []
         self.rewards = []
         self.dones = []
-        self.edge_indices = []  # New
+        self.edge_indices = []
 
         self.batch_size = batch_size
 
@@ -32,7 +32,7 @@ class PPOMemory:
         self.vals.append(vals)
         self.rewards.append(reward)
         self.dones.append(done)
-        self.edge_indices.append(edge_index)  # Store edge_index
+        self.edge_indices.append(edge_index)
 
     def generate_batches(self):
         n_states = len(self.states)
@@ -66,27 +66,27 @@ class ActorNetwork(nn.Module):
             alpha (float): Learning rate.
         """
         super(ActorNetwork, self).__init__()
-        self.n_stocks = n_stocks  # Number of stocks (nodes)
-        self.n_features = n_features  # Number of features per stock
+        self.n_stocks = n_stocks
+        self.n_features = n_features
 
         # GATv2 layer (learn relationships between stocks)
         self.gatv2 = GATv2Conv(
-            in_channels=self.n_features,  # Number of input features per stock
-            out_channels=hidden_size,  # Output size for each attention head
-            heads=num_heads,  # Number of attention heads
-            concat=True,  # Concatenate the heads' outputs
+            in_channels=self.n_features,
+            out_channels=hidden_size,
+            heads=num_heads,
+            concat=True,
             dropout=0.1
         )
 
         # GRU for sequential feature extraction
         self.gru = nn.GRU(
             input_size=hidden_size * num_heads,  # GATv2 output dimension (after concatenation)
-            hidden_size=gru_hidden_size,  # GRU hidden size
-            batch_first=True  # GRU expects batch as the first dimension
+            hidden_size=gru_hidden_size,
+            batch_first=True
         )
 
         # Fully connected layers for policy output (actor)
-        self.policy_fc = nn.Linear(gru_hidden_size, n_stocks)  # One action for each stock
+        self.policy_fc = nn.Linear(gru_hidden_size, self.n_stocks)  # One action for each stock
         self.log_std = nn.Parameter(T.zeros(n_stocks))  # Learnable log standard deviation
 
         # Optimizer
@@ -104,12 +104,10 @@ class ActorNetwork(nn.Module):
             mean: Mean of the action distribution (shape: [n_stocks]).
             std: Standard deviation of the action distribution.
         """
-        # Apply GATv2 to node features (shape: [n_stocks, hidden_size * num_heads])
-        print(x.shape, edge_index.shape)
-        print(x)
-        # x = x.reshape(self.n_stocks, self.n_features)
+        if x.dims() == 2:
+            x = x.unsqueeze(0)
 
-        gat_output = self.gatv2(x, edge_index) # .unsqueeze(0)  # Add batch dimension [1, n_stocks, features]
+        gat_output = self.gatv2(x, edge_index)
         print(gat_output)
 
         # GRU for time-series modeling
@@ -125,10 +123,9 @@ class ActorNetwork(nn.Module):
 
 
 class CriticNetwork(nn.Module):
-    def __init__(self, n_stocks, n_features, hidden_size, num_heads, gru_hidden_size, alpha):
+    def __init__(self, n_features, hidden_size, num_heads, gru_hidden_size, alpha):
         """
         Args:
-            n_stocks (int): Number of stocks (nodes).
             features (list): List of feature names (e.g., ["Open", "Close", ...]).
             hidden_size (int): Hidden size for GATv2 output per head.
             num_heads (int): Number of attention heads.
@@ -136,7 +133,6 @@ class CriticNetwork(nn.Module):
             alpha (float): Learning rate.
         """
         super(CriticNetwork, self).__init__()
-        self.n_stocks = n_stocks
         self.n_features = n_features
 
         # GATv2 layer for feature learning
@@ -172,6 +168,10 @@ class CriticNetwork(nn.Module):
         Returns:
             value: Estimated state value.
         """
+
+        if x.dims() == 2:
+            x = x.unsqueeze(0)
+
         # GATv2 layer
         gat_output = self.gatv2(x, edge_index).unsqueeze(0)  # Add batch dimension
 
@@ -217,7 +217,6 @@ class Agent:
         )
 
         self.critic = CriticNetwork(
-            n_stocks=self.n_stocks,
             n_features=self.n_features,
             hidden_size=128,
             num_heads=4,

@@ -115,13 +115,16 @@ class CustomTradingEnv(gym.Env):
         if stock_prices is None:
             raise ValueError("Stock prices data is required to compute edge index.")
 
+        print(f'stock prices: {stock_prices}')
         # Calculate correlations between stock price series
         correlations = np.corrcoef(stock_prices)
+        print(f'correlations: {correlations}')
         adjacency_matrix = (correlations >= correlation_threshold).astype(float)
-
+        print(f'adjacency_matrix: {adjacency_matrix}')
         # Convert adjacency matrix to sparse edge_index
         edge_index, _ = dense_to_sparse(torch.tensor(adjacency_matrix))
 
+        print(f'edge index: {edge_index}')
         return edge_index
 
     def step(self, action):
