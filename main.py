@@ -75,6 +75,7 @@ def main(mode):
                     agent.learn()
                     learn_iters += 1
 
+            print(score)
             score_history.append(score)
             avg_score = np.mean(score_history[-100:])
 
@@ -82,7 +83,7 @@ def main(mode):
                 best_score = avg_score
                 agent.save_models()
 
-            print(f'Episode {i}, Score: {score:.1f}, Avg Score: {avg_score:.1f}, '
+            print(f'Episode {i}, Score: {score:.8f}, Avg Score: {avg_score:.8f}, '
                   f'Timesteps: {n_steps}, Learning Steps: {learn_iters}')
 
         x = [i + 1 for i in range(len(score_history))]

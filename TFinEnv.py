@@ -182,7 +182,7 @@ class CustomTradingEnv(gym.Env):
         self.current_step += 1
 
         # Check if done
-        self.done = self.current_step >= len(self.data) - 1 or self.balance <= 0
+        self.done = self.current_step >= len(self.data["Date"].unique()) - 1 or self.balance <= 0
 
 
         # Get observation (includes market and portfolio features)

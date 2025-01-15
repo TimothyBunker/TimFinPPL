@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch_geometric import edge_index
+from torch_geometric.data import Data, Batch
 from torch_geometric.nn import GATv2Conv
 import logging
 
@@ -26,14 +27,14 @@ class PPOMemory:
 
         self.batch_size = batch_size
 
-    def store_memory(self, state, action, probs, vals, reward, done, edge_index):
+    def store_memory(self, state, action, probs, vals, reward, done, edges):
         self.states.append(state)
         self.actions.append(action)
         self.probs.append(probs)
         self.vals.append(vals)
         self.rewards.append(reward)
         self.dones.append(done)
-        self.edge_indices.append(edge_index)
+        self.edge_indices.append(edges)
 
     def generate_batches(self):
         n_states = len(self.states)
@@ -95,7 +96,7 @@ class ActorNetwork(nn.Module):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.to(self.device)
 
-    def forward(self, x, edge_index):
+    def forward(self, x, ei, b=False):
         """
         Forward pass of the Actor network.
         Args:
@@ -105,15 +106,13 @@ class ActorNetwork(nn.Module):
             mean: Mean of the action distribution (shape: [n_stocks]).
             std: Standard deviation of the action distribution.
         """
-
-        gat_output = self.gatv2(x, edge_index)
-        gat_output = gat_output.unsqueeze(0)
-        print(gat_output)
+        if b:
+            gat_output = self.gatv2(x.x, x.edge_index).unsqueeze(0)
+        else:
+            gat_output = self.gatv2(x, ei).unsqueeze(0)
 
         # GRU for time-series modeling
         gru_output, _ = self.gru(gat_output)  # Shape: [1, seq_len (n_stocks), gru_hidden_size]
-        print(f'gru_output: {gru_output}')
-        print(f'gru_output shape: {gru_output.shape}')
         last_gru_output = gru_output[:, -1, :]  # Take last time step [1, gru_hidden_size]
 
         # Policy output (mean of the normal distribution)
@@ -122,6 +121,28 @@ class ActorNetwork(nn.Module):
         std = log_std.exp()  # Convert log standard deviation to std deviation
 
         return mean.squeeze(), std.squeeze()
+
+    def save_checkpoint(self, checkpoint_dir='checkpoints', filename='model_checkpoint.pth'):
+        """
+        Save model parameters to a checkpoint file.
+        """
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+
+        filepath = os.path.join(checkpoint_dir, filename)
+        torch.save(self.state_dict(), filepath)
+        print(f"Model saved to {filepath}")
+
+    def load_checkpoint(self, checkpoint_dir='checkpoints', filename='model_checkpoint.pth'):
+        """
+        Load model parameters from a checkpoint file.
+        """
+        filepath = os.path.join(checkpoint_dir, filename)
+        if os.path.exists(filepath):
+            self.load_state_dict(torch.load(filepath, map_location=self.device))
+            print(f"Model loaded from {filepath}")
+        else:
+            print(f"Checkpoint not found at {filepath}")
 
 
 class CriticNetwork(nn.Module):
@@ -161,7 +182,7 @@ class CriticNetwork(nn.Module):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.to(self.device)
 
-    def forward(self, x, edge_index):
+    def forward(self, x, ei, b=False):
         """
         Forward pass of the Critic network.
         Args:
@@ -171,11 +192,10 @@ class CriticNetwork(nn.Module):
             value: Estimated state value.
         """
 
-        print(x.shape)
-        print(f'x: {x}')
-
-        # GATv2 layer
-        gat_output = self.gatv2(x, edge_index).unsqueeze(0)  # Add batch dimension
+        if b:
+            gat_output = self.gatv2(x.x, x.edge_index).unsqueeze(0)
+        else:
+            gat_output = self.gatv2(x, ei).unsqueeze(0)
 
         # GRU layer
         gru_output, _ = self.gru(gat_output)  # Shape: [1, n_stocks, gru_hidden_size]
@@ -185,6 +205,28 @@ class CriticNetwork(nn.Module):
         value = self.value_fc(last_gru_output).squeeze()  # Single value output
 
         return value
+
+    def save_checkpoint(self, checkpoint_dir='./checkpoints/', filename='model_checkpoint.pth'):
+        """
+        Save model parameters to a checkpoint file.
+        """
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+
+        filepath = os.path.join(checkpoint_dir, filename)
+        torch.save(self.state_dict(), filepath)
+        print(f"Model saved to {filepath}")
+
+    def load_checkpoint(self, checkpoint_dir='./checkpoints/', filename='model_checkpoint.pth'):
+        """
+        Load model parameters from a checkpoint file.
+        """
+        filepath = os.path.join(checkpoint_dir, filename)
+        if os.path.exists(filepath):
+            self.load_state_dict(torch.load(filepath, map_location=self.device))
+            print(f"Model loaded from {filepath}")
+        else:
+            print(f"Checkpoint not found at {filepath}")
 
 
 # Chooses actions
@@ -229,6 +271,13 @@ class Agent:
         # initialize your memory to handle a full batch of data
         self.memory = PPOMemory(batch_size)
 
+    def create_graph_data(self, state_batch, edge_index_batch):
+        graph_data_list = []
+        for i in range(state_batch.size(0)):  # Iterate over the batch
+            data = Data(x=state_batch[i], edge_index=edge_index_batch[i])
+            graph_data_list.append(data)
+        return graph_data_list
+
     def remember(self, state, action, probs, vals, rewards, done, edges):
         self.memory.store_memory(state, action, probs, vals, rewards, done, edges)
 
@@ -250,10 +299,8 @@ class Agent:
         state = T.tensor(observation, dtype=T.float32).to(self.actor.device)
         edge_index = edge_index.to(self.actor.device)
 
-        print(f'state: {state}')
-        print(f'state shape: {state.shape}')
         # Forward pass through actor and critic
-        mean, std = self.actor(state, edge_index)  # Actor's output for action distribution
+        mean, std = self.actor(state, edge_index, False)  # Actor's output for action distribution
         dist = T.distributions.Normal(mean, std)
 
         # Sample action from normal distribution
@@ -264,7 +311,7 @@ class Agent:
         log_prob = dist.log_prob(raw_action).sum(dim=-1)
 
         # Critic's value estimation
-        value = self.critic(state, edge_index)
+        value = self.critic(state, edge_index, False)
 
         return action.cpu().detach().numpy(), log_prob.cpu().detach().item(), value.cpu().detach().item()
 
@@ -306,12 +353,15 @@ class Agent:
                 # Add edge_index for the current batch
                 edge_index_batch = T.tensor(edge_indices_arr[batch], dtype=T.long).to(self.actor.device)
 
+                graph_data_list = self.create_graph_data(states, edge_index_batch)
+                obv_batch = Batch.from_data_list(graph_data_list)
+
                 # Actor forward pass (with edge_index)
-                mean, std = self.actor(states, edge_index_batch)
+                mean, std = self.actor(obv_batch, None, True)
                 dist = T.distributions.Normal(mean, std)
 
                 # Critic forward pass (with edge_index)
-                critic_value = self.critic(states, edge_index_batch).squeeze()
+                critic_value = self.critic(obv_batch, None, True).squeeze()
 
                 # Calculate new log probabilities
                 new_probs = dist.log_prob(actions).sum(dim=-1)
