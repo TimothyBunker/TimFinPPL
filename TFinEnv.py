@@ -178,33 +178,34 @@ class CustomTradingEnv(gym.Env):
         # Get observation (includes market and portfolio features)
         observation = self._get_observation()
 
-        recent_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
-            columns=self.data["Ticker"].unique()).iloc[
-                        self.current_step - self.lookback_window:self.current_step].T.values
-        recent_prices = np.nan_to_num(recent_prices, nan=np.nanmean(recent_prices, axis=1, keepdims=True))
+        current_close_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
+            columns=self.data["Ticker"].unique()).iloc[self.current_step].T.values
 
-        if recent_prices.shape[0] != self.n_stocks:
-            recent_prices = recent_prices.reshape(-1, self.lookback_window)
+        current_close_prices = np.nan_to_num(current_close_prices,
+                                             nan=np.nanmean(current_close_prices, axis=1, keepdims=True))
 
-        edge_index = self.compute_edge_index(stock_prices=recent_prices)
+        edge_index = self.compute_edge_index(stock_prices=current_close_prices)
 
         return observation, reward, self.done, edge_index, {}
 
     def _get_observation(self):
         # Ensure we pivot by "Ticker" to get (n_stocks, n_features)
         market_features = self.data.pivot(index="Date", columns="Ticker", values=self.features).iloc[
-            self.current_step - 1  # Get the most recent timestep
-            ].unstack().values.reshape(self.n_stocks, len(self.features))  # Shape: (n_stocks, n_features)
+            self.current_step  # Get the most recent timestep
+        ].unstack().values.reshape(self.n_stocks, len(self.features))  # Shape: (n_stocks, n_features)
 
-        # Debug check for expected shape
-        if market_features.shape != (self.n_stocks, len(self.features)):
-            raise ValueError(
-                f"Market features shape mismatch: {market_features.shape}, Expected: ({self.n_stocks}, {len(self.features)})")
+        recent_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
+            columns=self.data["Ticker"].unique()).iloc[
+                        self.current_step - self.lookback_window:self.current_step].values
 
-        portfolio_features = self._calculate_portfolio_features() # Shape: (2 * n_stocks + 1,)
-        print(f'porfolio features shape: {portfolio_features.shape}')
-        observation = np.concatenate([market_features.flatten(), portfolio_features])
-        print(f"Final observation shape: {observation.shape}")
+        mean_features = recent_prices.mean(axis=0).reshape(29, 1)  # Shape: (n_stocks, 1)
+        std_features = recent_prices.std(axis=0).reshape(29, 1)  # Shape: (n_stocks, 1)
+
+        aggregate_lookback_features = np.concatenate([mean_features, std_features], axis=1)
+        portfolio_features = self._calculate_portfolio_features()
+        total_features = np.concatenate([market_features, aggregate_lookback_features], axis=1)
+
+        observation = np.hstack([total_features, portfolio_features])
 
         return observation
 
