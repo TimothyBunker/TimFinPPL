@@ -53,6 +53,19 @@ class CustomTradingEnv(gym.Env):
 
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(observation_dim,), dtype=np.float32)
 
+
+    def get_aggregate_features(self):
+        recent_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
+            columns=self.data["Ticker"].unique()).iloc[
+                        self.current_step - self.lookback_window:self.current_step].values
+
+        mean_features = recent_prices.mean(axis=0).reshape(29, 1)  # Shape: (n_stocks, 1)
+        std_features = recent_prices.std(axis=0).reshape(29, 1)  # Shape: (n_stocks, 1)
+
+        aggregate_lookback_features = np.concatenate([mean_features, std_features], axis=1)
+
+        return aggregate_lookback_features
+
     def reset(self):
         # Reset internal state
         self.balance = self.initial_balance
@@ -62,11 +75,9 @@ class CustomTradingEnv(gym.Env):
         self.current_step = self.lookback_window + 1
         self.done = False
 
-        current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
-            columns=self.data["Ticker"].unique()).iloc[
-            self.current_step].values
+        aggregate_lookback_features = self.get_aggregate_features()
 
-        edge_index = self.compute_edge_index(stock_prices=current_prices)
+        edge_index = self.compute_edge_index(stock_prices=aggregate_lookback_features)
 
         observation = self._get_observation()  # Ensure this is flattened in `_get_observation()`
         return observation, edge_index
@@ -115,16 +126,12 @@ class CustomTradingEnv(gym.Env):
         if stock_prices is None:
             raise ValueError("Stock prices data is required to compute edge index.")
 
-        print(f'stock prices: {stock_prices}')
         # Calculate correlations between stock price series
         correlations = np.corrcoef(stock_prices)
-        print(f'correlations: {correlations}')
         adjacency_matrix = (correlations >= correlation_threshold).astype(float)
-        print(f'adjacency_matrix: {adjacency_matrix}')
         # Convert adjacency matrix to sparse edge_index
         edge_index, _ = dense_to_sparse(torch.tensor(adjacency_matrix))
 
-        print(f'edge index: {edge_index}')
         return edge_index
 
     def step(self, action):
@@ -181,13 +188,9 @@ class CustomTradingEnv(gym.Env):
         # Get observation (includes market and portfolio features)
         observation = self._get_observation()
 
-        current_close_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
-            columns=self.data["Ticker"].unique()).iloc[self.current_step].T.values
+        aggregate_features = self.get_aggregate_features()
 
-        current_close_prices = np.nan_to_num(current_close_prices,
-                                             nan=np.nanmean(current_close_prices, axis=1, keepdims=True))
-
-        edge_index = self.compute_edge_index(stock_prices=current_close_prices)
+        edge_index = self.compute_edge_index(stock_prices=aggregate_features)
 
         return observation, reward, self.done, edge_index, {}
 

@@ -35,7 +35,10 @@ def main(mode):
     alpha = 0.0003
     n_games = 300  # Number of episodes
     n_stocks = env.n_stocks
-    n_features = env.observation_space.shape[0]
+    n_features = int(env.observation_space.shape[0] / n_stocks)
+
+    print(n_features)
+    print(n_stocks)
     agent = Agent(
         n_actions=n_stocks,  # Number of continuous actions (number of stocks)
         input_dims=n_features,  # Observation space shape
@@ -65,7 +68,7 @@ def main(mode):
                 n_steps += 1
                 score += reward
 
-                agent.remember(observation, action, prob, val, reward, done)
+                agent.remember(observation, action, prob, val, reward, done, edge_index)
                 observation = observation_
 
                 if n_steps % N == 0:

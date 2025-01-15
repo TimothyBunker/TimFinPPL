@@ -5,6 +5,7 @@ import torch as T
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch_geometric import edge_index
 from torch_geometric.nn import GATv2Conv
 import logging
 
@@ -104,14 +105,15 @@ class ActorNetwork(nn.Module):
             mean: Mean of the action distribution (shape: [n_stocks]).
             std: Standard deviation of the action distribution.
         """
-        if x.dims() == 2:
-            x = x.unsqueeze(0)
 
         gat_output = self.gatv2(x, edge_index)
+        gat_output = gat_output.unsqueeze(0)
         print(gat_output)
 
         # GRU for time-series modeling
         gru_output, _ = self.gru(gat_output)  # Shape: [1, seq_len (n_stocks), gru_hidden_size]
+        print(f'gru_output: {gru_output}')
+        print(f'gru_output shape: {gru_output.shape}')
         last_gru_output = gru_output[:, -1, :]  # Take last time step [1, gru_hidden_size]
 
         # Policy output (mean of the normal distribution)
@@ -169,8 +171,8 @@ class CriticNetwork(nn.Module):
             value: Estimated state value.
         """
 
-        if x.dims() == 2:
-            x = x.unsqueeze(0)
+        print(x.shape)
+        print(f'x: {x}')
 
         # GATv2 layer
         gat_output = self.gatv2(x, edge_index).unsqueeze(0)  # Add batch dimension
@@ -227,8 +229,8 @@ class Agent:
         # initialize your memory to handle a full batch of data
         self.memory = PPOMemory(batch_size)
 
-    def remember(self, state, action, probs, vals, rewards, done):
-        self.memory.store_memory(state, action, probs, vals, rewards, done)
+    def remember(self, state, action, probs, vals, rewards, done, edges):
+        self.memory.store_memory(state, action, probs, vals, rewards, done, edges)
 
     def save_models(self):
         print('--saving models--')
@@ -248,7 +250,8 @@ class Agent:
         state = T.tensor(observation, dtype=T.float32).to(self.actor.device)
         edge_index = edge_index.to(self.actor.device)
 
-
+        print(f'state: {state}')
+        print(f'state shape: {state.shape}')
         # Forward pass through actor and critic
         mean, std = self.actor(state, edge_index)  # Actor's output for action distribution
         dist = T.distributions.Normal(mean, std)
