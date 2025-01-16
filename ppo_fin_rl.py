@@ -122,7 +122,7 @@ class ActorNetwork(nn.Module):
 
         return mean.squeeze(), std.squeeze()
 
-    def save_checkpoint(self, checkpoint_dir='checkpoints', filename='model_checkpoint.pth'):
+    def save_checkpoint(self, checkpoint_dir='./checkpoints/', filename='actor_checkpoint.pth'):
         """
         Save model parameters to a checkpoint file.
         """
@@ -133,7 +133,7 @@ class ActorNetwork(nn.Module):
         torch.save(self.state_dict(), filepath)
         print(f"Model saved to {filepath}")
 
-    def load_checkpoint(self, checkpoint_dir='checkpoints', filename='model_checkpoint.pth'):
+    def load_checkpoint(self, checkpoint_dir='./checkpoints/', filename='actor_checkpoint.pth'):
         """
         Load model parameters from a checkpoint file.
         """
@@ -206,7 +206,7 @@ class CriticNetwork(nn.Module):
 
         return value
 
-    def save_checkpoint(self, checkpoint_dir='./checkpoints/', filename='model_checkpoint.pth'):
+    def save_checkpoint(self, checkpoint_dir='./checkpoints/', filename='critic_checkpoint.pth'):
         """
         Save model parameters to a checkpoint file.
         """
@@ -217,7 +217,7 @@ class CriticNetwork(nn.Module):
         torch.save(self.state_dict(), filepath)
         print(f"Model saved to {filepath}")
 
-    def load_checkpoint(self, checkpoint_dir='./checkpoints/', filename='model_checkpoint.pth'):
+    def load_checkpoint(self, checkpoint_dir='./checkpoints/', filename='critic_checkpoint.pth'):
         """
         Load model parameters from a checkpoint file.
         """

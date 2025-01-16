@@ -57,6 +57,7 @@ def main(mode):
 
     # Training Loop (if in "train" mode)
     if mode == "train":
+        # agent.load_models()
         for i in range(n_games):
             observation, edge_index = env.reset()
             done = False
@@ -66,7 +67,7 @@ def main(mode):
                 action, prob, val = agent.choose_action(observation, edge_index)
                 observation_, reward, done, edge_index, info = env.step(action)
                 n_steps += 1
-                score += reward
+                score += (reward*1000000.)
 
                 agent.remember(observation, action, prob, val, reward, done, edge_index)
                 observation = observation_
