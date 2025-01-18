@@ -1,6 +1,6 @@
 import argparse
 import numpy as np
-from ppo_torch import Agent
+from ppo_fin_rl import Agent
 from TFinEnv import CustomTradingEnv  # Import your custom environment
 from utils import plot_learning_curve  # Optional, if you have a utility for plotting
 import pandas as pd
@@ -36,13 +36,12 @@ def main(mode):
     n_games = 300  # Number of episodes
     n_stocks = env.n_stocks
     n_features = int(env.observation_space.shape[0] / n_stocks)
-    input_dims = n_stocks * n_features
 
     print(n_features)
     print(n_stocks)
     agent = Agent(
         n_actions=n_stocks,  # Number of continuous actions (number of stocks)
-        input_dims=input_dims,  # Observation space shape
+        input_dims=n_features,  # Observation space shape
         alpha=alpha,
         batch_size=batch_size,
         n_epochs=n_epochs
@@ -65,13 +64,12 @@ def main(mode):
             score = 0
 
             while not done:
-                print(f'observation shape: {observation.shape}')
-                action, prob, val = agent.choose_action(observation)
+                action, prob, val = agent.choose_action(observation, edge_index)
                 observation_, reward, done, edge_index, info = env.step(action)
                 n_steps += 1
                 score += (reward*1000000.)
 
-                agent.remember(observation, action, prob, val, reward, done)
+                agent.remember(observation, action, prob, val, reward, done, edge_index)
                 observation = observation_
 
                 if n_steps % N == 0:
@@ -102,7 +100,7 @@ def main(mode):
             score = 0
 
             while not done:
-                action, prob, val = agent.choose_action(observation)
+                action, prob, val = agent.choose_action(observation, edge_index)
                 observation_, reward, done, edge_index, info = env.step(action)
                 score += reward
                 observation = observation_
