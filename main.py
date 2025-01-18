@@ -56,7 +56,7 @@ def main(mode):
 
     # Training Loop (if in "train" mode)
     if mode == "train":
-        # agent.load_models()
+        agent.load_models()
         for i in range(n_games):
             observation, edge_index = env.reset()
             done = False

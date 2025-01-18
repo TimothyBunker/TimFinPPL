@@ -284,6 +284,7 @@ class Agent:
         log_df = pd.DataFrame(training_log)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         parquet_filename = f"training_log_{timestamp}.parquet"
-        log_df.to_parquet(parquet_filename, index=False)
+        directory_name = "C:\\Users\\Tim\\PycharmProjects\\ppobasics\\logs\\training\\"
+        log_df.to_parquet(directory_name + parquet_filename, index=False)
         self.memory.clear_memory()
 
