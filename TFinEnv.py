@@ -176,7 +176,7 @@ class CustomTradingEnv(gym.Env):
         self.portfolio_features = self._calculate_portfolio_features()
 
         # Calculate reward
-        reward = (self.portfolio_value - old_portfolio_value) / old_portfolio_value
+        reward = ((self.portfolio_value - old_portfolio_value) / old_portfolio_value) * 1000.
 
         # Increment time step
         self.current_step += 1
