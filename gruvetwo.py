@@ -1,4 +1,6 @@
 import os
+import threading
+
 import numpy as np
 import torch as T
 import torch.nn.functional as F
@@ -6,10 +8,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
 import logging
+import LivePlot
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
+plot_thread = threading.Thread(target=LivePlot.live_plot, daemon=True)
+plot_thread.start()
 
 class PPOMemory:
     # Class made to contain all of the data of our model
@@ -251,6 +255,14 @@ class Agent:
 
                 # Total loss
                 total_loss = actor_loss + 0.5 * critic_loss
+
+                LivePlot.actor_losses.append(actor_loss.item())
+                LivePlot.critic_losses.append(critic_loss.item())
+                LivePlot.total_losses.append(total_loss.item())
+
+                # Print losses
+                print(f"Batch {batch_idx + 1}/{len(batches)}, Actor Loss: {actor_loss.item():.6f}, "
+                      f"Critic Loss: {critic_loss.item():.6f}, Total Loss: {total_loss.item():.6f}")
 
                 # Optimize
                 self.actor.optimizer.zero_grad()
