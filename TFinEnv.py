@@ -43,10 +43,15 @@ class CustomTradingEnv(gym.Env):
         self.held_shares = np.zeros(self.n_stocks)
         self.transaction_cost_ratio = kwargs.get("transaction_cost", 0.001)
 
-        self.portfolio_weights = np.zeros(self.n_stocks)
-        self.portfolio_features = np.zeros((self.n_stocks, 2))  # Initialize with zeros
-        self.portfolio_features[:, 0] = self.portfolio_value  # Set the portfolio value column
-        self.portfolio_features[:, 1] = self.balance  # Set the cash balance column
+        self.portfolio_features = np.zeros((self.n_stocks, 2))
+        self.portfolio_features[:, 0] = self.portfolio_value
+        self.portfolio_features[:, 1] = self.balance
+
+        # Reward gating
+        self.grace_period = 5
+        self.threshold = -100.0
+        self.heavy_penalty = 10.0
+        self.soft_penalty = 5.0
 
         self.action_space = spaces.Box(low=0, high=1, shape=(self.n_stocks,), dtype=np.float32)
         market_feature_dim =  self.n_stocks * len(self.features)
@@ -74,106 +79,81 @@ class CustomTradingEnv(gym.Env):
         self.balance = self.initial_balance
         self.portfolio_value = self.initial_balance
         self.held_shares = np.zeros(self.n_stocks)
-        self.portfolio_weights = np.zeros(self.n_stocks)
+        self.portfolio_features = np.zeros((self.n_stocks, 2))  # Reset portfolio features
+        self.portfolio_features[:, 0] = self.portfolio_value
+        self.portfolio_features[:, 1] = self.balance
         self.current_step = self.lookback_window + 1
         self.done = False
+        self.grace_period = 5  # Reset grace period if applicable
 
-        observation = self._get_observation()  # Ensure this is flattened in `_get_observation()`
+        # Get initial observation
+        observation = self._get_observation()
         return observation
 
     def _calculate_portfolio_features(self):
         """
-        Calculate portfolio-related features such as portfolio value, held weights, and cash balance.
+        Calculate portfolio-related features such as portfolio value and cash balance.
 
         Returns:
-            portfolio_features (np.array): Array of shape (n_stocks, 3) with columns:
-                - Column 0: Portfolio value for each stock.
-                - Column 1: Held weights for each stock.
-                - Column 2: Cash balance replicated for each stock.
+            portfolio_features (np.array): Array of shape (n_stocks, 2) with columns:
+                - Column 0: Portfolio value replicated for each stock.
+                - Column 1: Cash balance replicated for each stock.
         """
         # Get current prices
         current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
             columns=self.data["Ticker"].unique()
         ).iloc[self.current_step].values
 
-        # Update portfolio value
+        # Update portfolio value (sum of held shares and cash balance)
         self.portfolio_value = np.sum(self.held_shares * current_prices) + self.balance
-
-        # Calculate held weights for each stock
-        if self.portfolio_value > 0:
-            self.portfolio_weights = (self.held_shares * current_prices) / self.portfolio_value
-        else:
-            self.portfolio_weights = np.zeros(self.n_stocks)
 
         # Update portfolio features
         portfolio_features = np.zeros((self.n_stocks, 2))
-        portfolio_features[:, 0] = self.portfolio_value  # Portfolio value
-        portfolio_features[:, 1] = self.balance  # Cash balance
+        portfolio_features[:, 0] = self.portfolio_value  # Portfolio value replicated across stocks
+        portfolio_features[:, 1] = self.balance  # Cash balance replicated across stocks
 
         self.portfolio_features = portfolio_features
         return self.portfolio_features
 
     def step(self, action):
-        """
-        Execute one time step within the environment.
-
-        Args:
-            action (np.array): Portfolio allocation action.
-
-        Returns:
-            observation (np.array): Updated observation.
-            reward (float): Reward for the step.
-            done (bool): Whether the episode is complete.
-            info (dict): Additional info (if any).
-        """
-        # Normalize the action (ensure allocations sum to 1)
         if np.sum(action) == 0:
             action = np.ones_like(action) / len(action)
         else:
             action = action / np.sum(action)
 
-        # Get current prices
         current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
             columns=self.data["Ticker"].unique()
         ).iloc[self.current_step].values
 
-        # Calculate old portfolio value
         old_portfolio_value = self.portfolio_value
-
-        # Calculate target portfolio value and shares
         target_portfolio_value = old_portfolio_value * action
         target_shares = target_portfolio_value / current_prices
 
-        # Calculate shares to trade and associated transaction cost
         shares_to_trade = target_shares - self.held_shares
-        transaction_costs = np.sum(np.abs(shares_to_trade) * current_prices * self.transaction_cost_ratio)  # Example: 0.1% fee
+        transaction_costs = np.sum(np.abs(shares_to_trade) * current_prices * self.transaction_cost_ratio)
 
-        # Update held shares and cash balance
         self.held_shares += shares_to_trade
-        self.balance -= transaction_costs  # Deduct transaction costs from cash
-
-        if self.balance < 0:  # If cash goes negative, impose a heavy penalty
-            reward = -10
-            self.done = True
-            return self._get_observation(), reward, self.done, {}
-
-        # Update portfolio features including portfolio value and cash
+        self.balance -= transaction_costs
         self._calculate_portfolio_features()
 
-        # reward
         portfolio_change = (self.portfolio_value - old_portfolio_value) / (old_portfolio_value + 1e-6)
-        reward = portfolio_change - transaction_costs / (old_portfolio_value + 1e-6)
+        transaction_penalty = transaction_costs / (old_portfolio_value + 1e-6)
+        reward = portfolio_change - transaction_penalty
 
-        # Increment time step
+        if self.balance < self.threshold:
+            negative_balance_penalty = -1.0 * abs(self.balance) / abs(self.threshold)
+            reward += negative_balance_penalty
+            self.grace_period -= 1
+            if self.grace_period <= 0:
+                self.done = True
+        else:
+            if self.grace_period < 5:
+                self.grace_period += 1
+
         self.current_step += 1
+        self.done = self.done or (self.current_step >= len(self.data["Date"].unique()) - 1)
 
-        # Check if the episode is done
-        self.done = self.current_step >= len(self.data["Date"].unique()) - 1
-
-        # Get updated observation
-        observation = self._get_observation()
-
-        return observation, reward, self.done, {}
+        return self._get_observation(), reward, self.done, {}
 
     def _get_observation(self):
         # Ensure we pivot by "Ticker" to get (n_stocks, n_features)
