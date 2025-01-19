@@ -59,7 +59,7 @@ class PPOMemory:
 class ActorNetwork(nn.Module):
     def __init__(self, n_actions, input_dims, alpha, hidden_size=256, n_layers=1, chkpt_dir='C:\\Users\\Tim\\PycharmProjects\\ppobasics\\PPL\\tmp\\ppo'):
         super(ActorNetwork, self).__init__()
-        self.checkpoint_file = os.path.join(chkpt_dir, 'actor_torch_ppo')
+        self.checkpoint_file = os.path.join(chkpt_dir, 'actor_gru')
 
         # GRU to process temporal relationships
         self.gru = nn.GRU(
@@ -106,7 +106,7 @@ class ActorNetwork(nn.Module):
 class CriticNetwork(nn.Module):
     def __init__(self, input_dims, alpha, hidden_size=256, n_layers=1, chkpt_dir='C:\\Users\\Tim\\PycharmProjects\\ppobasics\\PPL\\tmp\\ppo'):
         super(CriticNetwork, self).__init__()
-        self.checkpoint_file = os.path.join(chkpt_dir, 'critic_torch_ppo')
+        self.checkpoint_file = os.path.join(chkpt_dir, 'critic_gru')
 
         # GRU to process temporal relationships
         self.gru = nn.GRU(
@@ -145,7 +145,7 @@ class CriticNetwork(nn.Module):
 
 class Agent:
     def __init__(self, n_actions, input_dims, gamma=0.99, alpha=0.0003, gae_lambda=0.95,
-                 policy_clip=0.2, batch_size=64, N=2048, n_epochs=10):
+                 policy_clip=0.2, batch_size=64, N=2048, n_epochs=10, entropy_coef=0.1):
 
         # Discount factor
         self.gamma = gamma
@@ -164,6 +164,9 @@ class Agent:
 
         # Your value estimate gradient
         self.critic = CriticNetwork(input_dims=input_dims, alpha=alpha)
+
+        # entropy hyperparameter
+        self.entropy_coef = entropy_coef
 
         # initialize your memory to handle a full batch of data
         self.memory = PPOMemory(batch_size)
@@ -234,6 +237,8 @@ class Agent:
 
                 # Actor and critic forward passes
                 dist = self.actor(states)
+                entropy = dist.entropy().mean()
+
                 critic_value = self.critic(states).squeeze()
 
                 # Calculate new log probabilities
@@ -248,6 +253,7 @@ class Agent:
                 weighted_probs = advantage[batch] * prob_ratio
                 clipped_probs = T.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * advantage[batch]
                 actor_loss = -T.min(weighted_probs, clipped_probs).mean()
+                actor_loss -= self.entropy_coef * entropy
 
                 # Critic loss
                 critic_loss = ((returns[batch] - critic_value) ** 2).mean()
@@ -275,8 +281,10 @@ class Agent:
                 self.actor.optimizer.zero_grad()
                 self.critic.optimizer.zero_grad()
                 total_loss.backward()
+
                 T.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
                 T.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
+
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
 

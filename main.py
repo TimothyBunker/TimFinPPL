@@ -24,7 +24,7 @@ def main(mode):
         raise ValueError("Invalid mode. Use 'train' or 'test'.")
 
     # Initialize the environment
-    initial_balance = 10000
+    initial_balance = 1000
     lookback_window = 50
     env = CustomTradingEnv(data=data, initial_balance=initial_balance, lookback_window=lookback_window)
 
@@ -33,7 +33,7 @@ def main(mode):
     batch_size = 64
     n_epochs = 10
     alpha = 0.0003
-    n_games = 1000  # Number of episodes
+    n_games = 100000  # Number of episodes
     n_stocks = env.n_stocks
     n_features = int(env.observation_space.shape[0] / n_stocks)
     input_dims = (n_stocks, n_features)
@@ -47,7 +47,7 @@ def main(mode):
     )
 
     # For plotting and tracking
-    figure_file = 'plots/stock_trading.png'
+    figure_file = 'C:\\Users\\Tim\\PycharmProjects\\ppobasics\\PPL\\plots'
     best_score = -np.inf  # Start with the lowest possible score
     score_history = []
     learn_iters = 0
@@ -56,7 +56,7 @@ def main(mode):
 
     # Training Loop (if in "train" mode)
     if mode == "train":
-        # agent.load_models()
+        agent.load_models()
         for i in range(n_games):
             observation = env.reset()
             done = False

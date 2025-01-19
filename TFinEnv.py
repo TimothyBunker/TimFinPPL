@@ -37,7 +37,7 @@ class CustomTradingEnv(gym.Env):
                          "EMA50", "ADX", "Log_Returns", "Pct_Change"]
 
         # Set initial balance and portfolio
-        self.initial_balance = 10000.
+        self.initial_balance = kwargs.get("initial_balance", 1000.)
         self.balance = self.initial_balance
         self.portfolio_value = self.balance
         self.held_shares = np.zeros(self.n_stocks)
