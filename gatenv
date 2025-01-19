@@ -37,20 +37,17 @@ class CustomTradingEnv(gym.Env):
                          "EMA50", "ADX", "Log_Returns", "Pct_Change"]
 
         # Set initial balance and portfolio
-        self.initial_balance = 10000.
+        self.initial_balance = 1000.
         self.balance = self.initial_balance
         self.portfolio_value = self.balance
         self.held_shares = np.zeros(self.n_stocks)
-        self.transaction_cost_ratio = kwargs.get("transaction_cost", 0.001)
-
         self.portfolio_weights = np.zeros(self.n_stocks)
-        self.portfolio_features = np.zeros((self.n_stocks, 2))  # Initialize with zeros
-        self.portfolio_features[:, 0] = self.portfolio_value  # Set the portfolio value column
-        self.portfolio_features[:, 1] = self.balance  # Set the cash balance column
+        self.portfolio_features = np.repeat(self.portfolio_value, self.n_stocks).reshape(self.n_stocks, 1)
 
         self.action_space = spaces.Box(low=0, high=1, shape=(self.n_stocks,), dtype=np.float32)
+
         market_feature_dim =  self.n_stocks * len(self.features)
-        portfolio_feature_dim = self.n_stocks * 2
+        portfolio_feature_dim = len(self.portfolio_features)
         aggregate_lookback_dim = self.n_stocks * 2
         observation_dim = market_feature_dim + portfolio_feature_dim + aggregate_lookback_dim
 
@@ -78,115 +75,137 @@ class CustomTradingEnv(gym.Env):
         self.current_step = self.lookback_window + 1
         self.done = False
 
+        aggregate_lookback_features = self.get_aggregate_features()
+
+        edge_index = self.compute_edge_index(stock_prices=aggregate_lookback_features)
+
         observation = self._get_observation()  # Ensure this is flattened in `_get_observation()`
-        return observation
+        return observation, edge_index
 
     def _calculate_portfolio_features(self):
         """
-        Calculate portfolio-related features such as portfolio value, held weights, and cash balance.
+        Calculate portfolio-related features such as portfolio weights, value, and held shares.
 
         Returns:
-            portfolio_features (np.array): Array of shape (n_stocks, 3) with columns:
-                - Column 0: Portfolio value for each stock.
-                - Column 1: Held weights for each stock.
-                - Column 2: Cash balance replicated for each stock.
+            portfolio_features (np.array): The portfolio features.
         """
         # Get current prices
         current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
-            columns=self.data["Ticker"].unique()
-        ).iloc[self.current_step].values
+            columns=self.data["Ticker"].unique()).iloc[
+            self.current_step].values
 
         # Update portfolio value
-        self.portfolio_value = np.sum(self.held_shares * current_prices) + self.balance
+        self.portfolio_value = np.sum(self.held_shares * current_prices)
 
-        # Calculate held weights for each stock
         if self.portfolio_value > 0:
             self.portfolio_weights = (self.held_shares * current_prices) / self.portfolio_value
         else:
             self.portfolio_weights = np.zeros(self.n_stocks)
+            self.portfolio_value = self.balance
 
-        # Update portfolio features
-        portfolio_features = np.zeros((self.n_stocks, 2))
-        portfolio_features[:, 0] = self.portfolio_value  # Portfolio value
-        portfolio_features[:, 1] = self.balance  # Cash balance
+        # # Create portfolio features array
+        # portfolio_features = np.concatenate([
+        #     self.portfolio_weights,  # Shape: (n_tickers,)
+        #     [self.portfolio_value],  # Shape: (1,)
+        #     self.held_shares  # Shape: (n_tickers,)
+        # ])
 
-        self.portfolio_features = portfolio_features
+        self.portfolio_features = np.repeat(self.portfolio_value, self.n_stocks).reshape(self.n_stocks, 1)
+
         return self.portfolio_features
+
+    def compute_edge_index(self, correlation_threshold=0.8, stock_prices=None):
+        """
+        Compute a dynamic edge index based on stock price correlations.
+        Args:
+            correlation_threshold (float): Threshold to consider connections.
+            stock_prices (np.array): Matrix of stock prices (shape: [n_stocks, lookback_window]).
+        Returns:
+            edge_index (torch.Tensor): Edge index for GATv2.
+        """
+        if stock_prices is None:
+            raise ValueError("Stock prices data is required to compute edge index.")
+
+        # Calculate correlations between stock price series
+        correlations = np.corrcoef(stock_prices)
+        adjacency_matrix = (correlations >= correlation_threshold).astype(float)
+        # Convert adjacency matrix to sparse edge_index
+        edge_index, _ = dense_to_sparse(torch.tensor(adjacency_matrix))
+
+        return edge_index
 
     def step(self, action):
         """
         Execute one time step within the environment.
 
         Args:
-            action (np.array): Portfolio allocation action.
+            action (np.array): The portfolio allocation action.
 
         Returns:
-            observation (np.array): Updated observation.
-            reward (float): Reward for the step.
+            observation (np.array): The next observation.
+            reward (float): The reward for the step.
             done (bool): Whether the episode is complete.
             info (dict): Additional info (if any).
         """
-        # Normalize the action (ensure allocations sum to 1)
+        # Normalize the action (e.g., ensure allocations sum to 1)
         if np.sum(action) == 0:
-            action = np.ones_like(action) / len(action)
+            action = np.ones_like(action) / len(action)  # Evenly distribute if all-zero action
         else:
             action = action / np.sum(action)
 
         # Get current prices
         current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
-            columns=self.data["Ticker"].unique()
-        ).iloc[self.current_step].values
+            columns=self.data["Ticker"].unique()).iloc[self.current_step].values
 
         # Calculate old portfolio value
         old_portfolio_value = self.portfolio_value
 
-        # Calculate target portfolio value and shares
+        # Target portfolio value and shares
         target_portfolio_value = old_portfolio_value * action
         target_shares = target_portfolio_value / current_prices
 
-        # Calculate shares to trade and associated transaction cost
+        # Calculate shares to trade
+        target_shares = target_shares.flatten()  # Ensure it's 1D
         shares_to_trade = target_shares - self.held_shares
-        transaction_costs = np.sum(np.abs(shares_to_trade) * current_prices * self.transaction_cost_ratio)  # Example: 0.1% fee
 
-        # Update held shares and cash balance
+        # Update held shares
         self.held_shares += shares_to_trade
-        self.balance -= transaction_costs  # Deduct transaction costs from cash
 
-        if self.balance < 0:  # If cash goes negative, impose a heavy penalty
-            reward = -10
-            self.done = True
-            return self._get_observation(), reward, self.done, {}
+        # If shit fucks up try commenting out this at least once
+        # Update portfolio-related features
+        self.portfolio_features = self._calculate_portfolio_features()
 
-        # Update portfolio features including portfolio value and cash
-        self._calculate_portfolio_features()
-
-        # reward
-        portfolio_change = (self.portfolio_value - old_portfolio_value) / (old_portfolio_value + 1e-6)
-        reward = portfolio_change - transaction_costs / (old_portfolio_value + 1e-6)
+        # Calculate reward
+        reward = ((self.portfolio_value - old_portfolio_value) / old_portfolio_value) * 1000.
 
         # Increment time step
         self.current_step += 1
 
-        # Check if the episode is done
-        self.done = self.current_step >= len(self.data["Date"].unique()) - 1
+        # Check if done
+        self.done = self.current_step >= len(self.data["Date"].unique()) - 1 or self.balance <= 0
 
-        # Get updated observation
+
+        # Get observation (includes market and portfolio features)
         observation = self._get_observation()
 
-        return observation, reward, self.done, {}
+        aggregate_features = self.get_aggregate_features()
+
+        edge_index = self.compute_edge_index(stock_prices=aggregate_features)
+
+        return observation, reward, self.done, edge_index, {}
 
     def _get_observation(self):
         # Ensure we pivot by "Ticker" to get (n_stocks, n_features)
         market_features = self.data.pivot(index="Date", columns="Ticker", values=self.features).iloc[
             self.current_step  # Get the most recent timestep
-        ].unstack().values.reshape(self.n_stocks, len(self.features))
+        ].unstack().values.reshape(self.n_stocks, len(self.features))  # Shape: (n_stocks, n_features)
 
         recent_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
             columns=self.data["Ticker"].unique()).iloc[
                         self.current_step - self.lookback_window:self.current_step].values
 
-        mean_features = recent_prices.mean(axis=0).reshape(self.n_stocks, 1)
-        std_features = recent_prices.std(axis=0).reshape(self.n_stocks, 1)
+        mean_features = recent_prices.mean(axis=0).reshape(29, 1)  # Shape: (n_stocks, 1)
+        std_features = recent_prices.std(axis=0).reshape(29, 1)  # Shape: (n_stocks, 1)
 
         aggregate_lookback_features = np.concatenate([mean_features, std_features], axis=1)
         portfolio_features = self._calculate_portfolio_features()
@@ -200,7 +219,7 @@ class CustomTradingEnv(gym.Env):
         print(f"Step: {self.current_step}")
         print(f"Portfolio Value: {self.portfolio_value}")
         print(f"Cash Balance: {self.balance}")
-        print(f"Held Shares: {self.held_shares}")
+        print(f"Portfolio Weights: {self.portfolio_weights}")
 
     def close(self):
         """

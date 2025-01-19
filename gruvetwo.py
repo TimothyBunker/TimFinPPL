@@ -57,7 +57,7 @@ class PPOMemory:
         self.dones = []
 
 class ActorNetwork(nn.Module):
-    def __init__(self, n_actions, input_dims, alpha, hidden_size=256, n_layers=1, chkpt_dir='./PPL/tmp/ppo'):
+    def __init__(self, n_actions, input_dims, alpha, hidden_size=256, n_layers=1, chkpt_dir='C:\\Users\\Tim\\PycharmProjects\\ppobasics\\PPL\\tmp\\ppo'):
         super(ActorNetwork, self).__init__()
         self.checkpoint_file = os.path.join(chkpt_dir, 'actor_torch_ppo')
 
@@ -104,7 +104,7 @@ class ActorNetwork(nn.Module):
 
 
 class CriticNetwork(nn.Module):
-    def __init__(self, input_dims, alpha, hidden_size=256, n_layers=1, chkpt_dir='./PPL/tmp/ppo'):
+    def __init__(self, input_dims, alpha, hidden_size=256, n_layers=1, chkpt_dir='C:\\Users\\Tim\\PycharmProjects\\ppobasics\\PPL\\tmp\\ppo'):
         super(CriticNetwork, self).__init__()
         self.checkpoint_file = os.path.join(chkpt_dir, 'critic_torch_ppo')
 

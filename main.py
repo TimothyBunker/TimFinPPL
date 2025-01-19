@@ -10,7 +10,7 @@ def main(mode):
     if mode == "train":
         print("Training Mode")
 
-        data = pd.read_parquet('./PPL/enriched_stock_data_with_sentiment_training.parquet')
+        data = pd.read_parquet(r'C:\\Users\\Tim\\PycharmProjects\\ppobasics\\PPL\\enriched_stock_data_with_sentiment_training.parquet')
         print(f"Loaded DataFrame shape: {data.shape}")
 
     elif mode == "test":
@@ -33,7 +33,7 @@ def main(mode):
     batch_size = 64
     n_epochs = 10
     alpha = 0.0003
-    n_games = 300  # Number of episodes
+    n_games = 1000  # Number of episodes
     n_stocks = env.n_stocks
     n_features = int(env.observation_space.shape[0] / n_stocks)
     input_dims = (n_stocks, n_features)
@@ -56,15 +56,16 @@ def main(mode):
 
     # Training Loop (if in "train" mode)
     if mode == "train":
-        agent.load_models()
+        # agent.load_models()
         for i in range(n_games):
-            observation, edge_index = env.reset()
+            observation = env.reset()
             done = False
             score = 0
 
             while not done:
+                # print(f'observation: {observation}')
                 action, prob, val = agent.choose_action(observation)
-                observation_, reward, done, edge_index, info = env.step(action)
+                observation_, reward, done, info = env.step(action)
                 n_steps += 1
                 score += reward
 
@@ -93,13 +94,13 @@ def main(mode):
         print("Running test episodes...")
         test_episodes = 10  # Define number of test episodes
         for i in range(test_episodes):
-            observation, edge_index = env.reset()
+            observation = env.reset()
             done = False
             score = 0
 
             while not done:
                 action, prob, val = agent.choose_action(observation)
-                observation_, reward, done, edge_index, info = env.step(action)
+                observation_, reward, done, info = env.step(action)
                 score += reward
                 observation = observation_
 
