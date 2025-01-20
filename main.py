@@ -51,7 +51,7 @@ def main(mode):
     best_score = -np.inf  # Start with the lowest possible score
     score_history = []
     learn_iters = 0
-    avg_score = 0
+    avg_score = -3.66540761
     n_steps = 0
 
     # Training Loop (if in "train" mode)

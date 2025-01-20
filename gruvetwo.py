@@ -59,7 +59,7 @@ class PPOMemory:
 class ActorNetwork(nn.Module):
     def __init__(self, n_actions, input_dims, alpha, hidden_size=256, n_layers=1, chkpt_dir='C:\\Users\\Tim\\PycharmProjects\\ppobasics\\PPL\\tmp\\ppo'):
         super(ActorNetwork, self).__init__()
-        self.checkpoint_file = os.path.join(chkpt_dir, 'actor_gru')
+        self.checkpoint_file = os.path.join(chkpt_dir, 'actor_torch_ppo')
 
         # GRU to process temporal relationships
         self.gru = nn.GRU(
@@ -106,7 +106,7 @@ class ActorNetwork(nn.Module):
 class CriticNetwork(nn.Module):
     def __init__(self, input_dims, alpha, hidden_size=256, n_layers=1, chkpt_dir='C:\\Users\\Tim\\PycharmProjects\\ppobasics\\PPL\\tmp\\ppo'):
         super(CriticNetwork, self).__init__()
-        self.checkpoint_file = os.path.join(chkpt_dir, 'critic_gru')
+        self.checkpoint_file = os.path.join(chkpt_dir, 'critic_torch_ppo')
 
         # GRU to process temporal relationships
         self.gru = nn.GRU(
@@ -145,7 +145,7 @@ class CriticNetwork(nn.Module):
 
 class Agent:
     def __init__(self, n_actions, input_dims, gamma=0.99, alpha=0.0003, gae_lambda=0.95,
-                 policy_clip=0.2, batch_size=64, N=2048, n_epochs=10, entropy_coef=0.1):
+                 policy_clip=0.2, batch_size=64, N=2048, n_epochs=10, entropy_coef=0.01):
 
         # Discount factor
         self.gamma = gamma
@@ -208,6 +208,7 @@ class Agent:
         return action, log_prob, value
 
     def learn(self):
+        avg_loss = 0
         for epoch in range(self.n_epochs):
             (state_arr, action_arr, old_probs_arr, vals_arr, reward_arr, dones_arr,
              batches) = self.memory.generate_batches()
@@ -277,6 +278,8 @@ class Agent:
                       f"Actor Loss: {actor_loss.item():.6f}, Critic Loss: {critic_loss.item():.6f}, "
                       f"Total Loss: {total_loss.item():.6f}")
 
+                avg_loss += total_loss.item()
+
                 # Optimize
                 self.actor.optimizer.zero_grad()
                 self.critic.optimizer.zero_grad()
@@ -287,6 +290,7 @@ class Agent:
 
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
+        print(f'average loss: {avg_loss / self.n_epochs}')
 
         # Clear memory after learning
         log_df = pd.DataFrame(training_log)
