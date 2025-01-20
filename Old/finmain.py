@@ -1,17 +1,12 @@
 import argparse
-import numpy as np
-from ppo_fin_rl import Agent
-from TFinEnv import CustomTradingEnv  # Import your custom environment
-from utils import plot_learning_curve  # Optional, if you have a utility for plotting
 import pandas as pd
-from DataAggregator import DataLoader, DataProcessor
 
 
 def main(mode):
     if mode == "train":
         print("Training Mode")
 
-        data = pd.read_parquet('enriched_stock_data_with_sentiment_training.parquet')
+        data = pd.read_parquet('../enriched_stock_data_with_sentiment_training.parquet')
         print(f"Loaded DataFrame shape: {data.shape}")
 
     elif mode == "test":

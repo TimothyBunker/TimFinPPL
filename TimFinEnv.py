@@ -6,7 +6,7 @@ import torch
 from torch_geometric.utils import dense_to_sparse
 
 
-class CustomTradingEnv(gym.Env):
+class TimTradingEnv(gym.Env):
     """
     A custom trading environment template for reinforcement learning.
     """
@@ -20,7 +20,7 @@ class CustomTradingEnv(gym.Env):
             data (pd.DataFrame): The market data.
             **kwargs: Additional arguments for customization.
         """
-        super(CustomTradingEnv, self).__init__()
+        super(TimTradingEnv, self).__init__()
 
         # Load and preprocess data
         self.data = data  # Replace with your dataset
@@ -109,8 +109,8 @@ class CustomTradingEnv(gym.Env):
 
         # Update portfolio features
         portfolio_features = np.zeros((self.n_stocks, 2))
-        portfolio_features[:, 0] = self.portfolio_value  # Portfolio value replicated across stocks
-        portfolio_features[:, 1] = self.balance  # Cash balance replicated across stocks
+        portfolio_features[:, 0] = self.portfolio_value
+        portfolio_features[:, 1] = self.balance
 
         self.portfolio_features = portfolio_features
         return self.portfolio_features

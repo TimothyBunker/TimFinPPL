@@ -1,7 +1,7 @@
 import argparse
 import numpy as np
-from gruvetwo import Agent
-from TFinEnv import CustomTradingEnv  # Import your custom environment
+from GruVTwo import Agent
+from TimFinEnv import TimTradingEnv  # Import your custom environment
 from utils import plot_learning_curve  # Optional, if you have a utility for plotting
 import pandas as pd
 
@@ -26,24 +26,28 @@ def main(mode):
     # Initialize the environment
     initial_balance = 1000
     lookback_window = 50
-    env = CustomTradingEnv(data=data, initial_balance=initial_balance, lookback_window=lookback_window)
+    env = TimTradingEnv(data=data, initial_balance=initial_balance, lookback_window=lookback_window)
 
     # PPO Parameters
     N = 2048  # Steps per learning iteration
     batch_size = 64
     n_epochs = 10
-    alpha = 0.0003
     n_games = 100000  # Number of episodes
     n_stocks = env.n_stocks
     n_features = int(env.observation_space.shape[0] / n_stocks)
     input_dims = (n_stocks, n_features)
+    entropy_coefficient = 0.00
+    alpha = 0.0003
+    grad_norm = 0.1
 
     agent = Agent(
         n_actions=n_stocks,  # Number of continuous actions (number of stocks)
         input_dims=input_dims,  # Observation space shape
         alpha=alpha,
         batch_size=batch_size,
-        n_epochs=n_epochs
+        n_epochs=n_epochs,
+        entropy_coef=entropy_coefficient,
+        grad_norm=grad_norm,
     )
 
     # For plotting and tracking
@@ -63,7 +67,6 @@ def main(mode):
             score = 0
 
             while not done:
-                # print(f'observation: {observation}')
                 action, prob, val = agent.choose_action(observation)
                 observation_, reward, done, info = env.step(action)
                 n_steps += 1

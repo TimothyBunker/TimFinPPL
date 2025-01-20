@@ -15,11 +15,6 @@ logger = logging.getLogger(__name__)
 training_log = []
 
 class PPOMemory:
-    # Class made to contain all of the data of our model
-    # such as our batches of data
-    # our agent data
-    # and methods to clear and store it too
-    # accessed by the agent
     def __init__(self, batch_size):
         self.states = []
         self.probs = []
@@ -63,16 +58,16 @@ class ActorNetwork(nn.Module):
 
         # GRU to process temporal relationships
         self.gru = nn.GRU(
-            input_size=input_dims[1],  # Number of features per stock (22)
-            hidden_size=hidden_size,  # GRU hidden state size
-            num_layers=n_layers,      # Number of GRU layers
-            batch_first=True          # Input shape: (batch_size, 29, 22)
+            input_size=input_dims[1],
+            hidden_size=hidden_size,
+            num_layers=n_layers,
+            batch_first=True
         )
 
         # Fully connected layers for action mean and standard deviation
         self.fc1 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc_mean = nn.Linear(hidden_size // 2, n_actions)  # Outputs the mean for the Gaussian
-        self.fc_std = nn.Linear(hidden_size // 2, n_actions)   # Outputs the log standard deviation
+        self.fc_mean = nn.Linear(hidden_size // 2, n_actions)
+        self.fc_std = nn.Linear(hidden_size // 2, n_actions)
 
         self.optimizer = optim.Adam(self.parameters(), lr=alpha)
         self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
@@ -82,18 +77,13 @@ class ActorNetwork(nn.Module):
         # GRU expects (batch_size, seq_len, input_dim)
         _, hidden = self.gru(state)  # hidden: (num_layers, batch_size, hidden_size)
 
-        # Use the last hidden state (from the last GRU layer)
         x = hidden[-1]  # Shape: (batch_size, hidden_size)
-
-        # Fully connected layers
         x = F.relu(self.fc1(x))
 
-        # Mean and standard deviation for Gaussian distribution
-        mean = self.fc_mean(x)  # Shape: (batch_size, n_actions)
-        log_std = self.fc_std(x)  # Shape: (batch_size, n_actions)
-        std = T.exp(log_std)  # Ensure standard deviation is positive
+        mean = self.fc_mean(x)
+        log_std = self.fc_std(x)
+        std = T.exp(log_std)
 
-        # Return a Normal (Gaussian) distribution
         return T.distributions.Normal(mean, std)
 
     def save_checkpoint(self):
@@ -110,15 +100,15 @@ class CriticNetwork(nn.Module):
 
         # GRU to process temporal relationships
         self.gru = nn.GRU(
-            input_size=input_dims[1],  # Number of features per stock (22)
-            hidden_size=hidden_size,  # GRU hidden state size
-            num_layers=n_layers,      # Number of GRU layers
-            batch_first=True          # Input shape: (batch_size, 29, 22)
+            input_size=input_dims[1],
+            hidden_size=hidden_size,
+            num_layers=n_layers,
+            batch_first=True
         )
 
         # Fully connected layers for value estimation
         self.fc1 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc2 = nn.Linear(hidden_size // 2, 1)  # Output a single scalar value
+        self.fc2 = nn.Linear(hidden_size // 2, 1)
 
         self.optimizer = optim.Adam(self.parameters(), lr=alpha)
         self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
@@ -128,14 +118,12 @@ class CriticNetwork(nn.Module):
         # GRU expects (batch_size, seq_len, input_dim)
         _, hidden = self.gru(state)  # hidden: (num_layers, batch_size, hidden_size)
 
-        # Use the last hidden state (from the last GRU layer)
         x = hidden[-1]  # Shape: (batch_size, hidden_size)
 
-        # Fully connected layers
         x = F.relu(self.fc1(x))
-        value = self.fc2(x)  # Output the state value
+        value = self.fc2(x)
 
-        return value  # Return a scalar value
+        return value
 
     def save_checkpoint(self):
         T.save(self.state_dict(), self.checkpoint_file)
@@ -145,7 +133,7 @@ class CriticNetwork(nn.Module):
 
 class Agent:
     def __init__(self, n_actions, input_dims, gamma=0.99, alpha=0.0003, gae_lambda=0.95,
-                 policy_clip=0.2, batch_size=64, N=2048, n_epochs=10, entropy_coef=0.01):
+                 policy_clip=0.2, batch_size=64, N=2048, n_epochs=10, entropy_coef=0.01, grad_norm=0.5):
 
         # Discount factor
         self.gamma = gamma
@@ -168,6 +156,9 @@ class Agent:
         # entropy hyperparameter
         self.entropy_coef = entropy_coef
 
+        # gradient clipping normalization
+        self.grad_norm = grad_norm
+
         # initialize your memory to handle a full batch of data
         self.memory = PPOMemory(batch_size)
 
@@ -189,19 +180,15 @@ class Agent:
             raise ValueError(f"Invalid observation: {observation}. Did you forget to reset the environment?")
 
         # Ensure observation is converted to a PyTorch tensor and batched
-        state = T.tensor(observation, dtype=T.float32).unsqueeze(0).to(self.actor.device)  # Add batch dimension
-        # Pass the state through the actor and critic networks
-        dist = self.actor(state)  # Get action distribution
-        value = self.critic(state)  # Get state value
+        state = T.tensor(observation, dtype=T.float32).unsqueeze(0).to(self.actor.device)
+        dist = self.actor(state)
+        value = self.critic(state)
 
-        # Sample an action from the action distribution
         action = dist.sample()
-
-        # Log probability of the chosen action
         log_prob = dist.log_prob(action)
 
         # Remove extra dimensions for scalar values
-        action = action.squeeze().cpu().numpy()  # Convert to NumPy array if needed
+        action = action.squeeze().cpu().numpy()
         log_prob = log_prob.sum().cpu().item()
         value = value.squeeze().cpu().item()
 
@@ -213,7 +200,6 @@ class Agent:
             (state_arr, action_arr, old_probs_arr, vals_arr, reward_arr, dones_arr,
              batches) = self.memory.generate_batches()
 
-            # Convert arrays to tensors
             values = T.tensor(vals_arr).to(self.actor.device)
             rewards = T.tensor(reward_arr).to(self.actor.device)
             dones = T.tensor(dones_arr).to(self.actor.device)
@@ -229,6 +215,7 @@ class Agent:
 
             # Normalize advantage
             advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+            advantage = T.clamp(advantage, min=-10, max=10)
             returns = advantage + values
 
             for batch_idx, batch in enumerate(batches):
@@ -236,14 +223,16 @@ class Agent:
                 old_probs = T.tensor(old_probs_arr[batch]).to(self.actor.device)
                 actions = T.tensor(action_arr[batch]).to(self.actor.device)
 
-                # Actor and critic forward passes
                 dist = self.actor(states)
                 entropy = dist.entropy().mean()
 
                 critic_value = self.critic(states).squeeze()
 
-                # Calculate new log probabilities
-                new_probs = dist.log_prob(actions)  # Log probabilities for actions
+                new_probs = dist.log_prob(actions)
+
+                eps = 1e-8  # Small value epsilon to avoid log(0) - renamed eps to avoid confusion
+                new_probs = T.clamp(new_probs, min=eps, max=-eps)
+                old_probs = T.clamp(old_probs, min=eps, max=-eps)
 
                 # Match dimensions if needed
                 if new_probs.dim() > old_probs.dim():
@@ -253,14 +242,17 @@ class Agent:
                 prob_ratio = T.exp(new_probs - old_probs)
                 weighted_probs = advantage[batch] * prob_ratio
                 clipped_probs = T.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * advantage[batch]
+
+                # losses
                 actor_loss = -T.min(weighted_probs, clipped_probs).mean()
                 actor_loss -= self.entropy_coef * entropy
+                assert not T.isnan(actor_loss).any(), "Actor loss contains NaN"
 
-                # Critic loss
                 critic_loss = ((returns[batch] - critic_value) ** 2).mean()
+                assert not T.isnan(critic_loss).any(), "Critic loss contains NaN"
 
-                # Total loss
                 total_loss = actor_loss + 0.5 * critic_loss
+                assert not T.isnan(total_loss).any(), "Total loss contains NaN"
 
                 # Log the data
                 timestamp = datetime.datetime.now().isoformat()  # Current timestamp
@@ -273,7 +265,6 @@ class Agent:
                     "total_loss": total_loss.item()
                 })
 
-                # Print batch losses
                 print(f"Epoch {epoch + 1}/{self.n_epochs}, Batch {batch_idx + 1}/{len(batches)}, "
                       f"Actor Loss: {actor_loss.item():.6f}, Critic Loss: {critic_loss.item():.6f}, "
                       f"Total Loss: {total_loss.item():.6f}")
@@ -285,12 +276,12 @@ class Agent:
                 self.critic.optimizer.zero_grad()
                 total_loss.backward()
 
-                T.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
-                T.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
+                T.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=self.grad_norm)
+                T.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=self.grad_norm)
 
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
-        print(f'average loss: {avg_loss / self.n_epochs}')
+        print(f'average loss: {avg_loss / (32*self.n_epochs)}')
 
         # Clear memory after learning
         log_df = pd.DataFrame(training_log)
