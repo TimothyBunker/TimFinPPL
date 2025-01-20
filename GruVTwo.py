@@ -6,7 +6,6 @@ import torch as T
 import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
-from torch.distributions.categorical import Categorical
 import logging
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')

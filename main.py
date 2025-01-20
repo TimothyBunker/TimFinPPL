@@ -1,8 +1,8 @@
 import argparse
 import numpy as np
 from GruVTwo import Agent
-from TimFinEnv import TimTradingEnv  # Import your custom environment
-from utils import plot_learning_curve  # Optional, if you have a utility for plotting
+from TimFinEnv import TimTradingEnv
+from utils import plot_learning_curve
 import pandas as pd
 
 
@@ -29,10 +29,10 @@ def main(mode):
     env = TimTradingEnv(data=data, initial_balance=initial_balance, lookback_window=lookback_window)
 
     # PPO Parameters
-    N = 2048  # Steps per learning iteration
+    N = 2048
     batch_size = 64
     n_epochs = 10
-    n_games = 100000  # Number of episodes
+    n_games = 100000
     n_stocks = env.n_stocks
     n_features = int(env.observation_space.shape[0] / n_stocks)
     input_dims = (n_stocks, n_features)
@@ -41,8 +41,8 @@ def main(mode):
     grad_norm = 0.1
 
     agent = Agent(
-        n_actions=n_stocks,  # Number of continuous actions (number of stocks)
-        input_dims=input_dims,  # Observation space shape
+        n_actions=n_stocks,
+        input_dims=input_dims,
         alpha=alpha,
         batch_size=batch_size,
         n_epochs=n_epochs,
@@ -52,13 +52,12 @@ def main(mode):
 
     # For plotting and tracking
     figure_file = 'C:\\Users\\Tim\\PycharmProjects\\ppobasics\\PPL\\plots'
-    best_score = -np.inf  # Start with the lowest possible score
+    best_score = -np.inf
     score_history = []
     learn_iters = 0
-    avg_score = -3.66540761
+    avg_score = 0
     n_steps = 0
 
-    # Training Loop (if in "train" mode)
     if mode == "train":
         agent.load_models()
         for i in range(n_games):
@@ -95,7 +94,7 @@ def main(mode):
     # Testing Loop
     else:
         print("Running test episodes...")
-        test_episodes = 10  # Define number of test episodes
+        test_episodes = 10
         for i in range(test_episodes):
             observation = env.reset()
             done = False

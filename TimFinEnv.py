@@ -2,8 +2,6 @@ import gym
 from gym import spaces
 import numpy as np
 import pandas as pd
-import torch
-from torch_geometric.utils import dense_to_sparse
 
 
 class TimTradingEnv(gym.Env):
