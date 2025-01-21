@@ -50,6 +50,7 @@ class TimTradingEnv(gym.Env):
         self.portfolio_features = np.zeros((self.n_stocks, 2))
         self.portfolio_features[:, 0] = self.portfolio_value
         self.portfolio_features[:, 1] = self.balance
+        self.old_portfolio_change = 0.
 
         # Reward gating
         self.initial_grace_period = kwargs.get("initial_grace_period", 1)
@@ -183,12 +184,13 @@ class TimTradingEnv(gym.Env):
         # Reward calculation
         scale_factor = 100
         portfolio_change = (self.portfolio_value - old_portfolio_value) / (old_portfolio_value + 1e-6)
-        if portfolio_change > 0.:
-            portfolio_change *= scale_factor
 
         transaction_penalty = transaction_costs / (old_portfolio_value + 1e-6) # * scale_factor
         reward = portfolio_change - transaction_penalty
-        print(f'reward: {reward}')
+        if portfolio_change > self.old_portfolio_change:
+            reward += 1.
+
+        self.old_portfolio_change = portfolio_change
 
         # Penalize negative cash balance
         # if portfolio_change < self.threshold:
