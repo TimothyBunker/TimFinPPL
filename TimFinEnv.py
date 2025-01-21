@@ -38,7 +38,13 @@ class TimTradingEnv(gym.Env):
         self.initial_balance = kwargs.get("initial_balance", 1000.)
         self.balance = self.initial_balance
         self.portfolio_value = self.balance
-        self.held_shares = np.zeros(self.n_stocks)
+
+        random_allocations = np.random.dirichlet(np.ones(self.n_stocks), size=1)[0]  # Random proportions summing to 1
+        current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
+            columns=self.data["Ticker"].unique()
+        ).iloc[self.current_step].values
+        self.held_shares = (self.initial_balance * random_allocations) / current_prices
+
         self.transaction_cost_ratio = kwargs.get("transaction_cost", 0.001)
 
         self.portfolio_features = np.zeros((self.n_stocks, 2))
@@ -77,7 +83,13 @@ class TimTradingEnv(gym.Env):
         # Reset internal state
         self.balance = self.initial_balance
         self.portfolio_value = self.balance
-        self.held_shares = np.zeros(self.n_stocks)
+
+        random_allocations = np.random.dirichlet(np.ones(self.n_stocks), size=1)[0]  # Random proportions summing to 1
+        current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
+            columns=self.data["Ticker"].unique()
+        ).iloc[self.current_step].values
+        self.held_shares = (self.initial_balance * random_allocations) / current_prices
+
         self.portfolio_features = np.zeros((self.n_stocks, 2))  # Reset portfolio features
         self.portfolio_features[:, 0] = self.portfolio_value
         self.portfolio_features[:, 1] = self.balance
@@ -104,9 +116,12 @@ class TimTradingEnv(gym.Env):
         ).iloc[self.current_step].values
 
         # Update portfolio value (sum of held shares and cash balance)
-        # print(f'current prices: {current_prices}')
-        # print(f'held shares: {self.held_shares}')
+
         self.portfolio_value = np.sum(self.held_shares * current_prices) + self.balance
+        # print(f'held_shares: {self.held_shares}')
+        # print(f'current_price: {current_prices}')
+        # print(f'portfolio value: {self.portfolio_value}')
+        # print(f'cash balance: {self.balance}')
 
         # Update portfolio features
         portfolio_features = np.zeros((self.n_stocks, 2))
@@ -162,23 +177,18 @@ class TimTradingEnv(gym.Env):
         # Update balance after transaction costs
         self.balance = old_portfolio_value * cash_allocation - transaction_costs
 
-        # print(f'stock portfolio value: {stock_portfolio_value}')
-        # print(f'old portfolio value: {old_portfolio_value}')
-        # print(f'cash allocation: {cash_allocation}')
-        # print(f'target portfolio value: {target_portfolio_value}')
-        # print(f'target shares: {target_shares}')
-        # print(f'held shares: {self.held_shares}')
-        # print(f'balance: {self.balance}')
-
         # Update portfolio features
         self._calculate_portfolio_features()
 
         # Reward calculation
-        scale_factor = 10
-        portfolio_change = (self.portfolio_value - old_portfolio_value) / (old_portfolio_value + 1e-6) * scale_factor
-        transaction_penalty = transaction_costs / (old_portfolio_value + 1e-6) * scale_factor
+        scale_factor = 100
+        portfolio_change = (self.portfolio_value - old_portfolio_value) / (old_portfolio_value + 1e-6)
+        if portfolio_change > 0.:
+            portfolio_change *= scale_factor
+
+        transaction_penalty = transaction_costs / (old_portfolio_value + 1e-6) # * scale_factor
         reward = portfolio_change - transaction_penalty
-        # print(f'portfolio change: {portfolio_change}')
+        print(f'reward: {reward}')
 
         # Penalize negative cash balance
         # if portfolio_change < self.threshold:

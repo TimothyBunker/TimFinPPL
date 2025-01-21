@@ -78,8 +78,9 @@ class ActorNetwork(nn.Module):
         x = hidden[-1]  # Use the last layer's hidden state: Shape (batch_size, hidden_size)
         x = F.relu(self.fc1(x))  # Pass through fully connected layer
 
-        concentration = F.softplus(self.fc_concentration(x))  # Ensure positive concentration
-        dist = T.distributions.Dirichlet(concentration)  # Dirichlet distribution
+        scaling_factor = 1.2
+        concentration = F.softplus(self.fc_concentration(x)) * scaling_factor
+        dist = T.distributions.Dirichlet(concentration)
 
         return dist
 

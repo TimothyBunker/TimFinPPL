@@ -28,7 +28,7 @@ def main(mode):
     # Initialize the environment
     initial_balance = 1000
     lookback_window = 50
-    grace_period = 1
+    grace_period = 20
     env = TimTradingEnv(data=data,
                         initial_balance=initial_balance,
                         lookback_window=lookback_window,
@@ -66,7 +66,7 @@ def main(mode):
     n_steps = 0
 
     if mode == "train":
-        # agent.load_models()
+        agent.load_models()
         for i in range(n_games):
             observation = env.reset()
             done = False
@@ -75,7 +75,7 @@ def main(mode):
             while not done:
                 action, prob, val = agent.choose_action(observation)
                 observation_, reward, done, info = env.step(action)
-                print(f'observation: {observation}\naction: {action}\nprob: {prob}\nval: {val}')
+                # print(f'observation: {observation}\naction: {action}\nprob: {prob}\nval: {val}')
                 # env.render()
                 n_steps += 1
                 score += reward
