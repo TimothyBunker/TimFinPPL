@@ -1,7 +1,5 @@
 import argparse
 import numpy as np
-from sympy import print_tree
-
 from GruVTwo import Agent
 from TimFinEnv import TimTradingEnv
 from utils import plot_learning_curve
