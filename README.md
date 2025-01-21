@@ -12,3 +12,5 @@ The PPO framework is for actor-critic analysis with continuous learning in mind 
 - Right now the reward isn't balanced well enough per each state and learning either stagnates or stops
   - To rectify this  I am thinking about gather things like sentiment for easier decision-making, but also making the reward based on immediate change to start
   - but then transitioning to a more refined model once the short term is at least circumvented and we can make progress
+
+![FinBot.png](images%2FFinBot.png)
