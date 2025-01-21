@@ -114,11 +114,9 @@ agent.evaluate(env=test_env, n_episodes=50)
 ---
 
 ## Visualization
-
-### Example Performance
+- In the Plot tools I have a generic system for live plotting and plotting in post which you will find aptly named haha
+- And for reference here's what FinBot looks like in the metal!
 ![FinBot.png](images%2FFinBot.png)
-
-Key metrics like portfolio value trends, reward distribution, and allocation strategies are visualized to track the agent's progress.
 
 ---
 
