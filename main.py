@@ -1,5 +1,7 @@
 import argparse
 import numpy as np
+from sympy import print_tree
+
 from GruVTwo import Agent
 from TimFinEnv import TimTradingEnv
 from utils import plot_learning_curve
@@ -26,7 +28,12 @@ def main(mode):
     # Initialize the environment
     initial_balance = 1000
     lookback_window = 50
-    env = TimTradingEnv(data=data, initial_balance=initial_balance, lookback_window=lookback_window)
+    grace_period = 1
+    env = TimTradingEnv(data=data,
+                        initial_balance=initial_balance,
+                        lookback_window=lookback_window,
+                        initial_grace_period=grace_period
+                        )
 
     # PPO Parameters
     N = 2048
@@ -36,7 +43,7 @@ def main(mode):
     n_stocks = env.n_stocks
     n_features = int(env.observation_space.shape[0] / n_stocks)
     input_dims = (n_stocks, n_features)
-    entropy_coefficient = 0.00
+    entropy_coefficient = 0.01
     alpha = 0.0003
     grad_norm = 0.1
 
@@ -59,7 +66,7 @@ def main(mode):
     n_steps = 0
 
     if mode == "train":
-        agent.load_models()
+        # agent.load_models()
         for i in range(n_games):
             observation = env.reset()
             done = False
@@ -68,6 +75,8 @@ def main(mode):
             while not done:
                 action, prob, val = agent.choose_action(observation)
                 observation_, reward, done, info = env.step(action)
+                print(f'observation: {observation}\naction: {action}\nprob: {prob}\nval: {val}')
+                # env.render()
                 n_steps += 1
                 score += reward
 

@@ -63,10 +63,9 @@ class ActorNetwork(nn.Module):
             batch_first=True
         )
 
-        # Fully connected layers for action mean and standard deviation
-        self.fc1 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc_mean = nn.Linear(hidden_size // 2, n_actions)
-        self.fc_std = nn.Linear(hidden_size // 2, n_actions)
+        # Fully connected layers
+        self.fc1 = nn.Linear(hidden_size, hidden_size // 2)  # Input size matches hidden_size
+        self.fc_concentration = nn.Linear(hidden_size // 2, n_actions + 1)  # For Dirichlet output
 
         self.optimizer = optim.Adam(self.parameters(), lr=alpha)
         self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
@@ -76,14 +75,13 @@ class ActorNetwork(nn.Module):
         # GRU expects (batch_size, seq_len, input_dim)
         _, hidden = self.gru(state)  # hidden: (num_layers, batch_size, hidden_size)
 
-        x = hidden[-1]  # Shape: (batch_size, hidden_size)
-        x = F.relu(self.fc1(x))
+        x = hidden[-1]  # Use the last layer's hidden state: Shape (batch_size, hidden_size)
+        x = F.relu(self.fc1(x))  # Pass through fully connected layer
 
-        mean = self.fc_mean(x)
-        log_std = self.fc_std(x)
-        std = T.exp(log_std)
+        concentration = F.softplus(self.fc_concentration(x))  # Ensure positive concentration
+        dist = T.distributions.Dirichlet(concentration)  # Dirichlet distribution
 
-        return T.distributions.Normal(mean, std)
+        return dist
 
     def save_checkpoint(self):
         T.save(self.state_dict(), self.checkpoint_file)
@@ -183,11 +181,15 @@ class Agent:
         dist = self.actor(state)
         value = self.critic(state)
 
-        action = dist.sample()
-        log_prob = dist.log_prob(action)
+        raw_action = dist.sample()
+
+        # action = T.clamp(raw_action, min=0)
+        # action = action / action.sum()
+
+        log_prob = dist.log_prob(raw_action)
 
         # Remove extra dimensions for scalar values
-        action = action.squeeze().cpu().numpy()
+        action = raw_action.squeeze().cpu().numpy()
         log_prob = log_prob.sum().cpu().item()
         value = value.squeeze().cpu().item()
 

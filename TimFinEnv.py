@@ -46,10 +46,11 @@ class TimTradingEnv(gym.Env):
         self.portfolio_features[:, 1] = self.balance
 
         # Reward gating
-        self.grace_period = 5
-        self.threshold = -100.0
-        self.heavy_penalty = 10.0
-        self.soft_penalty = 5.0
+        self.initial_grace_period = kwargs.get("initial_grace_period", 1)
+        self.grace_period = self.initial_grace_period
+        self.threshold = -0.1
+        self.heavy_penalty = 1.5
+        self.soft_penalty = .5
 
         self.action_space = spaces.Box(low=0, high=1, shape=(self.n_stocks,), dtype=np.float32)
         market_feature_dim =  self.n_stocks * len(self.features)
@@ -75,14 +76,14 @@ class TimTradingEnv(gym.Env):
     def reset(self):
         # Reset internal state
         self.balance = self.initial_balance
-        self.portfolio_value = self.initial_balance
+        self.portfolio_value = self.balance
         self.held_shares = np.zeros(self.n_stocks)
         self.portfolio_features = np.zeros((self.n_stocks, 2))  # Reset portfolio features
         self.portfolio_features[:, 0] = self.portfolio_value
         self.portfolio_features[:, 1] = self.balance
         self.current_step = self.lookback_window + 1
         self.done = False
-        self.grace_period = 5  # Reset grace period if applicable
+        self.grace_period = self.initial_grace_period
 
         # Get initial observation
         observation = self._get_observation()
@@ -103,6 +104,8 @@ class TimTradingEnv(gym.Env):
         ).iloc[self.current_step].values
 
         # Update portfolio value (sum of held shares and cash balance)
+        # print(f'current prices: {current_prices}')
+        # print(f'held shares: {self.held_shares}')
         self.portfolio_value = np.sum(self.held_shares * current_prices) + self.balance
 
         # Update portfolio features
@@ -114,40 +117,89 @@ class TimTradingEnv(gym.Env):
         return self.portfolio_features
 
     def step(self, action):
-        if np.sum(action) == 0:
-            action = np.ones_like(action) / len(action)
-        else:
-            action = action / np.sum(action)
+        """
+        Execute one time step within the environment.
 
+        Args:
+            action (np.array): Portfolio allocation action (including cash allocation).
+
+        Returns:
+            observation (np.array): Updated observation.
+            reward (float): Reward for the step.
+            done (bool): Whether the episode is complete.
+            info (dict): Additional info (if any).
+        """
+        # Normalize the action (ensure allocations sum to 1)
+        # action = np.clip(action, 0, 1)
+        # action = action / np.sum(action)
+
+        # Separate cash and stock allocations
+        cash_allocation = action[-1]
+        stock_allocation = action[:-1]
+
+        # Get current prices
         current_prices = self.data.pivot(index="Date", columns="Ticker", values="Close").reindex(
             columns=self.data["Ticker"].unique()
         ).iloc[self.current_step].values
 
+        # Calculate old portfolio value
         old_portfolio_value = self.portfolio_value
-        target_portfolio_value = old_portfolio_value * action
+
+        # Calculate target portfolio value and shares for stocks
+        stock_portfolio_value = old_portfolio_value * (1 - cash_allocation)
+        target_portfolio_value = stock_portfolio_value * stock_allocation
         target_shares = target_portfolio_value / current_prices
 
+        # Transaction costs for re-balancing
         shares_to_trade = target_shares - self.held_shares
-        transaction_costs = np.sum(np.abs(shares_to_trade) * current_prices * self.transaction_cost_ratio)
+        transaction_costs = np.sum(
+            np.abs(shares_to_trade) * current_prices * self.transaction_cost_ratio
+        )
 
-        self.held_shares += shares_to_trade
-        self.balance -= transaction_costs
+        # Update held shares directly based on target
+        self.held_shares = target_shares
+
+        # Update balance after transaction costs
+        self.balance = old_portfolio_value * cash_allocation - transaction_costs
+
+        # print(f'stock portfolio value: {stock_portfolio_value}')
+        # print(f'old portfolio value: {old_portfolio_value}')
+        # print(f'cash allocation: {cash_allocation}')
+        # print(f'target portfolio value: {target_portfolio_value}')
+        # print(f'target shares: {target_shares}')
+        # print(f'held shares: {self.held_shares}')
+        # print(f'balance: {self.balance}')
+
+        # Update portfolio features
         self._calculate_portfolio_features()
 
-        portfolio_change = (self.portfolio_value - old_portfolio_value) / (old_portfolio_value + 1e-6)
-        transaction_penalty = transaction_costs / (old_portfolio_value + 1e-6)
+        # Reward calculation
+        scale_factor = 10
+        portfolio_change = (self.portfolio_value - old_portfolio_value) / (old_portfolio_value + 1e-6) * scale_factor
+        transaction_penalty = transaction_costs / (old_portfolio_value + 1e-6) * scale_factor
         reward = portfolio_change - transaction_penalty
+        # print(f'portfolio change: {portfolio_change}')
 
-        if self.balance < self.threshold:
-            negative_balance_penalty = -1.0 * abs(self.balance) / abs(self.threshold)
-            reward += negative_balance_penalty
-            self.grace_period -= 1
-            if self.grace_period <= 0:
-                self.done = True
-        else:
-            if self.grace_period < 5:
-                self.grace_period += 1
+        # Penalize negative cash balance
+        # if portfolio_change < self.threshold:
+        #     # negative_balance_penalty = -1.0 * abs(self.balance) / abs(self.threshold)
+        #     reward -= self.soft_penalty
+        #     self.grace_period -= 1
+        #     if self.grace_period <= 0:
+        #         self.done = True
+        #         return self._get_observation(), reward, self.done, {}
 
+        # else:
+        #     # Reset grace period if balance recovers
+        #     self.grace_period = self.initial_grace_period
+
+        if self.balance < 0.:
+            reward -= self.heavy_penalty
+            self.balance = 0.
+            self.done = True
+            return self._get_observation(), reward, self.done, {}
+
+        # Increment time step
         self.current_step += 1
         self.done = self.done or (self.current_step >= len(self.data["Date"].unique()) - 1)
 
