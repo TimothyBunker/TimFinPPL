@@ -285,11 +285,12 @@ class Agent:
                 self.critic.optimizer.step()
         print(f'average loss: {avg_loss / (32*self.n_epochs)}')
 
-        # Clear memory after learning
+        # Clear memory after learning and save training log
         log_df = pd.DataFrame(training_log)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        os.makedirs(self.log_dir, exist_ok=True)
         parquet_filename = f"training_log_{timestamp}.parquet"
-        directory_name = "C:\\Users\\Tim\\PycharmProjects\\ppobasics\\logs\\training\\"
-        log_df.to_parquet(directory_name + parquet_filename, index=False)
+        log_path = os.path.join(self.log_dir, parquet_filename)
+        log_df.to_parquet(log_path, index=False)
         self.memory.clear_memory()
 

@@ -9,7 +9,7 @@ import seaborn as sns
 from collections import defaultdict
 import numpy as np
 
-from FinEnv import scaled_features
+# from FinEnv import scaled_features  # removed unused import (legacy)
 
 # Mapping from textual analyst rating to numeric.
 RATING_MAP = {
@@ -46,10 +46,10 @@ class DataLoader:
         print("Initial Data Head:")
         print(data.head().to_string())
 
-
         # Stack the data from wide to long format (Date/Ticker index)
+        # Use level=0 to pivot tickers into the index
         stacked = (
-            data.stack(level=0, future_stack=True)
+            data.stack(level=0)
                 .rename_axis(['Date', 'Ticker'])
                 .reset_index(level=1)
         )
@@ -58,6 +58,45 @@ class DataLoader:
         print(stacked.head())
 
         return pd.DataFrame(stacked)
+    
+    def fetch_sentiment(self):
+        """
+        Fetch news headlines for each ticker and compute a simple sentiment score per date.
+        Uses a lexicon-based approach on titles.
+        Returns a DataFrame with columns ['Date', 'Ticker', 'sentiment_score'].
+        """
+        # Simple word lists for sentiment
+        POS_WORDS = ['good','great','positive','beat','bullish','up','strong','profit','gain']
+        NEG_WORDS = ['bad','poor','negative','miss','bearish','down','weak','loss','drop','risk']
+        records = []
+        # Iterate tickers
+        for ticker in self.tickers:
+            try:
+                tk = yf.Ticker(ticker)
+                news_items = tk.news
+            except Exception:
+                news_items = []
+            for item in news_items:
+                ts = item.get('providerPublishTime')
+                title = item.get('title', '')
+                if ts is None or not title:
+                    continue
+                # Convert timestamp to date
+                try:
+                    dt = pd.to_datetime(ts, unit='s').normalize()
+                except Exception:
+                    continue
+                text = title.lower()
+                pos = sum(text.count(w) for w in POS_WORDS)
+                neg = sum(text.count(w) for w in NEG_WORDS)
+                score = (pos - neg) / (pos + neg + 1e-8)
+                records.append({'Date': dt, 'Ticker': ticker, 'sentiment_score': score})
+        if not records:
+            return pd.DataFrame(columns=['Date','Ticker','sentiment_score'])
+        df_sent = pd.DataFrame(records)
+        # Average scores per date & ticker
+        df_sent = df_sent.groupby(['Date','Ticker'], as_index=False)['sentiment_score'].mean()
+        return df_sent
 
 
 class DataProcessor:
@@ -176,21 +215,30 @@ class DataProcessor:
         # ----------------
         # Handle Missing Data
         # ----------------
+        # Fill missing values per ticker and interpolate
         df_filled = df.groupby('Ticker', group_keys=False).apply(
-            lambda group: group.ffill().bfill().infer_objects(copy=False).interpolate(method='linear')
+            lambda group: group.ffill().bfill().infer_objects().interpolate(method='linear')
         )
         # Reset index to avoid ambiguity between index and columns
         df_filled = df_filled.reset_index()
 
         # ----------------
-        # Scale Data Per Ticker
-        # ----------------
-
-        # Define columns to exclude from scaling
-        exclude_columns = ["Close", "High", "Low", "Open"]  # Add any other price-related columns you want to exclude
-        df_scaled = self.scale_features(df_filled, exclude_columns)
-
-        return df_scaled
+        # Add sentiment features from Analyst_Rating and Earnings_Surprise if available
+        if 'Analyst_Rating' in df_filled.columns:
+            df_filled['sentiment_pred'] = df_filled['Analyst_Rating'].astype(float)
+        else:
+            df_filled['sentiment_pred'] = 0.0
+        # Include earnings surprise as a separate feature if present
+        if 'Earnings_Surprise' in df_filled.columns:
+            df_filled['earnings_surprise'] = df_filled['Earnings_Surprise'].astype(float)
+        else:
+            df_filled['earnings_surprise'] = 0.0
+        # Add placeholder columns for specialized agent outputs (to be filled by ensemble)
+        df_filled['anomaly_score'] = 0.0
+        df_filled['short_term_pred'] = 0.0
+        df_filled['long_term_pred'] = 0.0
+        # Return enriched DataFrame (scaling handled by external pipeline)
+        return df_filled
 
 
 class DataVisualizer:

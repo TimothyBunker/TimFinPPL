@@ -1,0 +1,80 @@
+# Sample configuration for fin_ppl project
+
+# Data file paths
+data:
+  train_file: enriched_stock_data_with_sentiment_training.parquet
+  test_file: enriched_stock_data_with_sentiment.parquet
+
+# Environment settings
+env:
+  # Mode: 'legacy' uses DataFrame env; 'windowed' uses precomputed windows
+  type: multi_windowed  # 'multi_windowed', 'legacy'
+  initial_balance: 1000
+  transaction_cost: 0.001
+  # For legacy mode:
+  lookback_window: 50
+  initial_grace_period: 20
+  # For windowed mode: file paths for .npy windows
+  train_windows_file: data/processed/train_windows_50.npy
+  test_windows_file: data/processed/test_windows_50.npy
+  price_index: 0  # index of price feature in windows
+  # Risk penalty configuration
+  risk:
+    volatility_window: 10       # number of steps for volatility calculation
+    volatility_penalty: 0.0    # penalty weight on std deviation
+    drawdown_penalty: 0.0       # penalty weight on drawdown
+    turnover_penalty: 0.0      # penalty weight on turnover (sum of trades)
+
+agent:
+  ids: ["trend", "timing", "anomaly", "sentiment"]
+# PPO hyperparameters
+ppo:
+  n_steps: 2048          # Number of steps before update
+  batch_size: 64         # Mini-batch size for PPO updates
+  n_epochs: 10           # Epochs per PPO update
+  n_games: 100000        # Total training episodes
+  alpha: 0.0003          # Learning rate
+  policy_clip: 0.2       # PPO clip parameter
+  entropy_coef: 0.01     # Entropy bonus coefficient
+  grad_norm: 0.5         # Gradient clipping max norm
+  gamma: 0.99            # Discount factor
+  gae_lambda: 0.95       # GAE lambda
+
+# Random seed for reproducibility
+seed: 42
+
+logging:
+  plot_file: plots/learning_curve.png  # Learning curve output
+  checkpoint_dir: tmp/ppo              # Model checkpoints
+  log_dir: logs/training               # Training logs
+  
+# Agent configuration
+agent:
+  type: short_term_ppo  # Options: 'short_term_ppo', 'long_term_ppo', 'anomaly_ppo', 'sentiment_ppo', 'ensemble'
+  # For EnsembleAgent: paths to pretrained sub-agent models
+  sub_models:
+    anomaly: models/anomaly.pt
+    short_term: models/short_term.pt
+    long_term: models/long_term.pt
+    sentiment: models/sentiment.pt
+  # Per-sub-agent hidden_dims override (autoencoders, predictors)
+  sub_hidden_dims:
+    # Hidden dimensions for each sub-agent (must match training)
+    anomaly: [128, 64]
+    short_term: 16
+    long_term: 64
+    sentiment: [32, 16]
+  sub_conv_dims:
+    # CNN channels for short_term predictor (trained with conv_dims=[32,16])
+    short_term: [32, 16]
+  n_sent_features: 1
+  # For MLPAgent
+  hidden_dims: [256, 128]
+  batch_size: 64
+  n_epochs: 10
+  alpha: 0.0003
+  policy_clip: 0.2
+  entropy_coef: 0.01
+  grad_norm: 0.5
+  gamma: 0.99
+  gae_lambda: 0.95

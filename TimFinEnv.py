@@ -2,6 +2,7 @@ import gym
 from gym import spaces
 import numpy as np
 import pandas as pd
+from typing import Optional
 
 
 class TimTradingEnv(gym.Env):
@@ -10,15 +11,96 @@ class TimTradingEnv(gym.Env):
     """
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, data: pd.DataFrame, **kwargs):
+    def __init__(
+        self,
+        data: Optional[pd.DataFrame] = None,
+        data_windows: Optional[np.ndarray] = None,
+        multi_agent: bool = False,
+        **kwargs
+    ):
         """
         Initialize the trading environment.
 
         Args:
-            data (pd.DataFrame): The market data.
-            **kwargs: Additional arguments for customization.
+            data (pd.DataFrame): Market DataFrame for non-windowed mode.
+            data_windows (np.ndarray): Precomputed windows (T, n_assets, lookback, n_features).
+            multi_agent (bool): If True, environment supports multiple agents.
+            **kwargs: Additional args (initial_balance, lookback_window, etc.).
         """
         super(TimTradingEnv, self).__init__()
+        # Determine mode
+        self.windowed = data_windows is not None
+        self.multi_agent = multi_agent
+        # Configuration
+        self.initial_balance = kwargs.get('initial_balance', 1000.0)
+        self.transaction_cost = kwargs.get('transaction_cost', 0.001)
+
+        if self.windowed:
+            # Windowed mode uses precomputed NumPy array
+            # data_windows shape: (T, n_assets, lookback, n_features)
+            self.data_windows = data_windows
+            self.n_steps, self.n_stocks, self.lookback_window, self.n_features = data_windows.shape
+            # Placeholder for portfolio per agent or single
+            self._init_portfolios()
+            # Observation space: per agent one window + portfolio features (2 dims)
+            obs_shape = (self.n_stocks, self.lookback_window, self.n_features + 2)
+            if self.multi_agent:
+                # Dict of observation spaces
+                self.observation_space = spaces.Dict({
+                    f'agent_{i}': spaces.Box(
+                        low=-np.inf, high=np.inf, shape=obs_shape, dtype=np.float32
+                    ) for i in range(self.n_agents)
+                })
+                self.action_space = spaces.Dict({
+                    f'agent_{i}': spaces.Box(
+                        low=0, high=1, shape=(self.n_stocks + 1,), dtype=np.float32
+                    ) for i in range(self.n_agents)
+                })
+            else:
+                self.observation_space = spaces.Box(
+                    low=-np.inf, high=np.inf, shape=obs_shape, dtype=np.float32
+                )
+                self.action_space = spaces.Box(
+                    low=0, high=1, shape=(self.n_stocks + 1,), dtype=np.float32
+                )
+        else:
+            # Legacy DataFrame-based mode
+            assert data is not None, "DataFrame must be provided in non-windowed mode"
+            self.data = data.copy()
+            # original init code below
+            self.lookback_window = kwargs.get('lookback_window', 50)
+            self.done = False
+            self.current_step = self.lookback_window + 1
+            self.n_stocks = self.data['Ticker'].nunique()
+            self.features = kwargs.get('features', [
+                "High", "Low", "Open", "Close", "Volume", "MA50",
+                "RSI", "MACD", "Bollinger_High", "Bollinger_Low",
+                "OBV", "VWAP", "ATR", "Stochastic_%K", "Williams_%R",
+                "EMA50", "ADX", "Log_Returns", "Pct_Change"
+            ])
+            # Initialize portfolio and attributes
+            self._init_portfolios()
+            # Define action and observation spaces (legacy)
+            self.action_space = spaces.Box(low=0, high=1, shape=(self.n_stocks + 1,), dtype=np.float32)
+            obs_dim = (self.n_stocks * len(self.features)
+                       + self.n_stocks * 2
+                       + self.n_stocks * 2)
+            self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
+
+    def _init_portfolios(self):
+        """
+        Initialize portfolios for single or multiple agents.
+        """
+        # Number of agents
+        self.n_agents = 1 if not self.multi_agent else getattr(self, 'n_agents', 1)
+        # Balances and holdings
+        self.balances = np.array([self.initial_balance] * self.n_agents, dtype=float)
+        # holdings: shape (n_agents, n_stocks)
+        # initial holdings set to zero
+        self.held_shares = np.zeros((self.n_agents, self.n_stocks), dtype=float)
+        self.portfolio_values = self.balances.copy()
+        # old portfolio change for reward shaping
+        self.old_portfolio_change = np.zeros(self.n_agents, dtype=float)
 
         # Load and preprocess data
         self.data = data  # Replace with your dataset
