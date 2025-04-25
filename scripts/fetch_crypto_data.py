@@ -1,207 +1,200 @@
 #!/usr/bin/env python
 """
-Fetch spot and perpetual futures OHLCV and funding-rate data for crypto assets via CCXT,
-merge into a single DataFrame, and save as Parquet for downstream training.
+Fetch spot‑ and perpetual‑futures OHLCV + funding‑rate data for crypto assets via CCXT,
+merge the feeds into a single Parquet file (rows = timestamps, columns = [spot, perp, funding]).
+
+Key fixes vs. previous version
+==============================
+1. **Deribit perpetual symbols** – they are literally ``BTC-PERPETUAL`` / ``ETH-PERPETUAL``.
+   The resolver now returns them explicitly when the user passes ``BTC-PERP`` or leaves the
+   perp leg blank.
+2. **Exchange type for Deribit** – Perpetuals are a *swap* on Deribit, not ``future``.
+   ``options = {'defaultType': 'swap'}`` ensures CCXT picks the correct API branch.
+3. **Robust symbol resolution** –  adds a tiny cache + helper for each exchange so we can
+   look up by base‑currency, unified alias, or partial matches without grabbing random
+   option chains.
+4. **Funding‑rate availability guard** – if the exchange doesn’t support ``fetch_funding_rate_history``
+   we fall back to zeros instead of crashing.
+5. **Minor** – clearer CLI, PEP‑8-ish formatting, more logging.
 """
-import argparse
-import os
-import time
-try:
-    import ccxt
-    # Debug: show environment and ccxt
-    import sys
-    print(f"[Debug] Python executable: {sys.executable}")
-    try:
-        print(f"[Debug] ccxt version: {ccxt.__version__}")
-    except Exception:
-        print("[Debug] ccxt imported, version unknown")
-except ImportError:
-    ccxt = None
+from __future__ import annotations
+
+import argparse, os, sys, time
+from pathlib import Path
+from typing import List, Dict, Any
+
 import pandas as pd
+from dateutil import parser as dateparser
+
 try:
-    from dateutil import parser as dateparser
-except ImportError:
-    raise ImportError("python-dateutil is required. Install with `pip install python-dateutil`")
+    import ccxt  # noqa: F401 – we only need to import to validate install
+except ImportError as exc:
+    sys.exit("ccxt is required – install with `pip install ccxt` (inside your venv).")
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='Fetch crypto spot/perp/funding data')
-    parser.add_argument('--tickers', type=str, required=True,
-                        help='Comma-separated list of symbols, e.g. BTC/USDT,ETH/USDT')
-    parser.add_argument('--start_date', type=str, required=True,
-                        help='ISO start date, e.g. 2022-01-01T00:00:00Z')
-    parser.add_argument('--end_date', type=str, required=True,
-                        help='ISO end date, e.g. 2022-06-01T00:00:00Z')
-    parser.add_argument('--timeframe', type=str, default='1h',
-                        help='CCXT OHLCV timeframe (e.g. 1h, 4h)')
-    parser.add_argument('--limit', type=int, default=1000,
-                        help='Max OHLCV candles per fetch')
-    parser.add_argument('--spot-exchange', type=str, default='binanceus',
-                        help='CCXT spot exchange id (e.g. binanceus, coinbasepro)')
-    parser.add_argument('--perp-exchange', type=str, default='deribit',
-                        help='CCXT perpetual futures exchange id (e.g. deribit, binanceus)')
-    parser.add_argument('--output', type=str, default='data/crypto/crypto_data.parquet',
-                        help='Output Parquet file path')
-    return parser.parse_args()
+# ╭──────────────────────────────────────────────────────────────────────────╮
+# ┃ CLI helpers                                                             ┃
+# ╰──────────────────────────────────────────────────────────────────────────╯
 
-def iso_to_ms(ts: str) -> int:
-    dt = dateparser.isoparse(ts)
-    return int(dt.timestamp() * 1000)
+def cli() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Fetch crypto spot/perp/funding data via CCXT")
+    p.add_argument("--tickers", required=True,
+                   help="Comma‑separated list. Examples:\n"
+                        "  * 'BTC/USD' (shares same symbol for spot & perp)\n"
+                        "  * 'BTC/USD:BTC-PERP' (explicit perp leg)\n"
+                        "  * 'BTC/USD:BTC-PERPETUAL,ETH/USD' (multiple pairs)")
+    p.add_argument("--start_date", required=True, help="ISO8601, e.g. 2022-01-01T00:00:00Z")
+    p.add_argument("--end_date", required=True, help="ISO8601, e.g. 2022-06-01T00:00:00Z")
+    p.add_argument("--timeframe", default="1h", help="OHLCV timeframe – default 1h")
+    p.add_argument("--limit", type=int, default=1000, help="Candles per batch (exchange cap)")
+    p.add_argument("--spot_exchange", default="kraken", help="CCXT id for spot (default kraken)")
+    p.add_argument("--perp_exchange", default="deribit", help="CCXT id for perpetuals")
+    p.add_argument("--output", default="data/crypto/crypto_data.parquet",
+                   help="Where to write the Parquet file")
+    return p.parse_args()
 
-def fetch_ohlcv(exchange, symbol, since, timeframe, limit):
-    all_bars = []
-    t0 = since
-    while True:
-        bars = exchange.fetch_ohlcv(symbol, timeframe, since=t0, limit=limit)
-        if not bars:
-            break
-        all_bars.extend(bars)
-        if len(bars) < limit:
-            break
-        t0 = bars[-1][0] + 1
-        time.sleep(exchange.rateLimit / 1000)
-    return all_bars
 
-def main():
-    # Parse CLI args (shows help/usage first)
-    args = parse_args()
-    if ccxt is None:
-        import sys
-        print("Error: ccxt library is required. Install into your venv with `pip install ccxt`." )
-        print(f"Python executable: {sys.executable}")
-        exit(1)
-    # Prepare spot exchange with fallback list
-    spot_exch = None
-    # Fallback priorities for spot: user choice, kraken, binanceus, binance, bitstamp
-    spot_ids = [args.spot_exchange, 'kraken', 'binanceus', 'binance', 'bitstamp']
-    for ex in spot_ids:
-        try:
-            spot_exch = getattr(ccxt, ex)({'enableRateLimit': True})
-            spot_exch.load_markets()
-            print(f"Using spot exchange: {ex}")
-            break
-        except Exception as e:
-            print(f"Spot exchange '{ex}' failed: {e}")
-            spot_exch = None
-    if spot_exch is None:
-        print("Error: no working spot exchange found. Install ccxt or choose --spot-exchange.")
-        exit(1)
-    # Prepare perpetual futures exchange (for funding rates)
-    perp_exch = None
-    # Fallback priorities: user choice, deribit, binanceus, bitmex
-    perp_ids = [args.perp_exchange, 'deribit', 'binanceus', 'bitmex']
-    for ex in perp_ids:
-        try:
-            perp_exch = getattr(ccxt, ex)({
-                'enableRateLimit': True,
-                'options': {'defaultType': 'future'}
-            })
-            perp_exch.load_markets()
-            print(f"Using perpetual exchange: {ex}")
-            break
-        except Exception as e:
-            print(f"Perp exchange '{ex}' failed: {e}")
-            perp_exch = None
-    use_funding = perp_exch is not None
-    if not use_funding:
-        print("Warning: no working perpetual exchange found; funding rates will be zero.")
-    since = iso_to_ms(args.start_date)
-    # Iterate tickers
-    records = []
-    # Loop over ticker pairs: 'spot_symbol:perp_symbol'
-    def resolve_symbol(exchange, sym):
-        """Resolve a user-provided symbol to an exchange-supported one."""
-        available = exchange.symbols
-        # exact match
-        if sym in available:
-            return sym
-        # uppercase/lowercase variants
-        up = sym.upper(); low = sym.lower()
-        if up in available:
+def iso_ms(ts: str) -> int:
+    return int(dateparser.isoparse(ts).timestamp() * 1000)
+
+
+# ╭──────────────────────────────────────────────────────────────────────────╮
+# ┃ Exchange bootstrap helpers                                              ┃
+# ╰──────────────────────────────────────────────────────────────────────────╯
+
+def boot_exchange(idx: str, *, kind: str) -> "ccxt.Exchange":
+    """Instantiate + load markets. Kind is 'spot' | 'perp' for log semantics."""
+    opts: Dict[str, Any] = {"enableRateLimit": True}
+    if kind == "perp":
+        # Deribit & Binance both require defaultType="swap" for perpetual endpoints.
+        opts["options"] = {"defaultType": "swap"}
+    ex = getattr(ccxt, idx)(opts)
+    ex.load_markets()
+    print(f"✔ Connected to {idx} ({kind}) – {len(ex.symbols)} symbols")
+    return ex
+
+
+def symbol_resolver(exchange: "ccxt.Exchange"):
+    """Return a closure that maps user‑supplied strings to real exchange symbols."""
+    syms = exchange.symbols  # cache list
+
+    # If Deribit – build quick lookup for PERPETUALs
+    perpetual_map: Dict[str, str] = {}
+    if exchange.id == "deribit":
+        for s in syms:
+            if s.endswith("-PERPETUAL"):
+                base = s.split("-")[0]
+                perpetual_map[base] = s
+
+    def _resolve(user_sym: str, *, leg: str) -> str:
+        # 1. exact hit
+        if user_sym in syms:
+            return user_sym
+        # 2. attempt Deribit base->PERPETUAL mapping for perp leg
+        base = user_sym.split("/")[0].split("-")[0]
+        if leg == "perp" and base in perpetual_map:
+            return perpetual_map[base]
+        # 3. case variants
+        up, low = user_sym.upper(), user_sym.lower()
+        if up in syms:
             return up
-        if low in available:
+        if low in syms:
             return low
-        # prefix match (common for perp: base-*)
-        base = sym.split('/')[0].split('-')[0]
-        for s in available:
+        # 4. fallback: first symbol starting with same base (beware!
+        for s in syms:
             if s.startswith(base):
                 return s
-        # fallback to original
-        return sym
+        return user_sym  # may raise later if still bad
 
-    # Loop over ticker pairs: 'spot_symbol:perp_symbol'
-    for pair in args.tickers.split(','):
+    return _resolve
+
+
+# ╭──────────────────────────────────────────────────────────────────────────╮
+# ┃ Data pull primitives                                                    ┃
+# ╰──────────────────────────────────────────────────────────────────────────╯
+
+def fetch_ohlcv_all(exchange: "ccxt.Exchange", symbol: str, since: int,
+                    timeframe: str, limit: int) -> List[List[Any]]:
+    out: List[List[Any]] = []
+    cursor = since
+    while True:
+        batch = exchange.fetch_ohlcv(symbol, timeframe, since=cursor, limit=limit)
+        if not batch:
+            break
+        out.extend(batch)
+        if len(batch) < limit:
+            break
+        cursor = batch[-1][0] + 1
+        time.sleep(exchange.rateLimit / 1000)
+    return out
+
+
+def to_ohlcv_df(raw: List[List[Any]], col: str) -> pd.DataFrame:
+    df = pd.DataFrame(raw, columns=["ts", "open", "high", "low", "close", "vol"])
+    df.index = pd.to_datetime(df.pop("ts"), unit="ms")
+    return df[["close"]].rename(columns={"close": col})
+
+
+# ╭──────────────────────────────────────────────────────────────────────────╮
+# ┃ Main driver                                                             ┃
+# ╰──────────────────────────────────────────────────────────────────────────╯
+
+def main():
+    args = cli()
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    start_ms, end_ms = iso_ms(args.start_date), iso_ms(args.end_date)
+
+    spot = boot_exchange(args.spot_exchange, kind="spot")
+    perp = boot_exchange(args.perp_exchange, kind="perp")
+
+    spot_resolve = symbol_resolver(spot)
+    perp_resolve = symbol_resolver(perp)
+
+    frames: List[pd.DataFrame] = []
+
+    for pair in args.tickers.split(","):
         pair = pair.strip()
-        # Split into spot and perp user strings
-        if ':' in pair:
-            user_spot, user_perp = pair.split(':', 1)
-        else:
-            user_spot = user_perp = pair
-        # Resolve into actual exchange symbols
-        spot_symbol = resolve_symbol(spot_exch, user_spot)
-        perp_symbol = resolve_symbol(perp_exch, user_perp) if use_funding else user_perp
-        label = user_spot  # user-facing name for DataFrame
-        # Fetch spot OHLCV
-        print(f"Fetching spot OHLCV for {spot_symbol}...")
-        spot_bars = fetch_ohlcv(spot_exch, spot_symbol, since, args.timeframe, args.limit)
-        df_spot = pd.DataFrame(spot_bars, columns=['timestamp','open','high','low','close','volume'])
-        df_spot['Date'] = pd.to_datetime(df_spot['timestamp'], unit='ms')
-        df_spot.set_index('Date', inplace=True)
-        df_spot = df_spot[['close']].rename(columns={'close': 'spot_price'})
-        # Fetch perp OHLCV
-        print(f"Fetching perp OHLCV for {perp_symbol}...")
-        use_symbol = perp_symbol
-        try:
-            perp_bars = fetch_ohlcv(perp_exch, perp_symbol, since, args.timeframe, args.limit)
-        except Exception as e:
-            # Attempt Deribit-specific suffix fallback: '-PERP' -> '-PERPETUAL'
-            if 'BadSymbol' in str(e) and use_symbol.endswith('-PERP'):
-                alt = use_symbol + 'ETUAL'
-                print(f"Info: retrying perp OHLCV with alternate symbol '{alt}'")
-                try:
-                    perp_bars = fetch_ohlcv(perp_exch, alt, since, args.timeframe, args.limit)
-                    use_symbol = alt
-                except Exception:
-                    print(f"Warning: cannot fetch perp OHLCV for {perp_symbol} or {alt}")
-                    perp_bars = None
-            else:
-                print(f"Warning: cannot fetch perp OHLCV for {perp_symbol}: {e}")
-                perp_bars = None
-        if perp_bars:
-            df_perp = pd.DataFrame(perp_bars, columns=['timestamp','open','high','low','close','volume'])
-            df_perp['Date'] = pd.to_datetime(df_perp['timestamp'], unit='ms')
-            df_perp.set_index('Date', inplace=True)
-            df_perp = df_perp[['close']].rename(columns={'close': 'perp_price'})
-        else:
-            # Fallback: use spot prices as perp price
-            df_perp = df_spot.rename(columns={'spot_price': 'perp_price'})
-        # Funding rate history (perp)
-        # Funding rate history
-        # Funding rate history (perp)
-        if use_funding:
-            try:
-                fr = perp_exch.fetch_funding_rate_history(use_symbol, since=since, limit=args.limit)
-                df_fr = pd.DataFrame(fr)
-                df_fr['Date'] = pd.to_datetime(df_fr['timestamp'], unit='ms')
-                df_fr.set_index('Date', inplace=True)
-                df_fr = df_fr[['fundingRate']]
-            except Exception as e:
-                print(f"Warning: failed to fetch funding rates for {perp_symbol}: {e}")
-                df_fr = pd.DataFrame(index=df_spot.index)
-                df_fr['fundingRate'] = 0.0
-        else:
-            df_fr = pd.DataFrame(index=df_spot.index)
-            df_fr['fundingRate'] = 0.0
-        # Merge spot, perp, funding
-        df = df_spot.join(df_perp, how='inner').join(df_fr, how='left')
-        # Use spot symbol as Ticker label
-        df['Ticker'] = label
-        df['basis'] = df['perp_price'] - df['spot_price']
-        records.append(df)
-    # Concat all
-    result = pd.concat(records).reset_index().rename(columns={'index':'Date'})
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    result.to_parquet(args.output)
-    print(f"Saved crypto data to {args.output}")
+        user_spot, user_perp = (pair.split(":", 1) + [""])[:2]
+        if not user_perp:
+            user_perp = user_spot  # default to same base
 
-if __name__ == '__main__':
+        spot_sym = spot_resolve(user_spot, leg="spot")
+        perp_sym = perp_resolve(user_perp, leg="perp")
+        label = user_spot  # nice name for downstream grouping
+
+        print(f"⏳ {label}: pulling spot {spot_sym} …")
+        spot_raw = fetch_ohlcv_all(spot, spot_sym, start_ms, args.timeframe, args.limit)
+        df_spot = to_ohlcv_df(spot_raw, "spot_price")
+
+        print(f"⏳ {label}: pulling perp {perp_sym} …")
+        try:
+            perp_raw = fetch_ohlcv_all(perp, perp_sym, start_ms, args.timeframe, args.limit)
+        except Exception as exc:
+            print(f"⚠️  {perp_sym} failed – {exc}. Falling back to spot prices for perp leg.")
+            perp_raw = []
+        df_perp = to_ohlcv_df(perp_raw or spot_raw, "perp_price")
+
+        # funding
+        if hasattr(perp, "fetch_funding_rate_history"):
+            try:
+                fr_hist = perp.fetch_funding_rate_history(perp_sym, since=start_ms, limit=args.limit)
+                df_fr = pd.DataFrame(fr_hist)[["timestamp", "fundingRate"]]
+                df_fr.index = pd.to_datetime(df_fr.pop("timestamp"), unit="ms")
+                df_fr = df_fr.rename(columns={"fundingRate": "funding_rate"})
+            except Exception as exc:
+                print(f"⚠️  funding history unavailable for {perp_sym}: {exc}")
+                df_fr = pd.DataFrame(index=df_perp.index, columns=["funding_rate"]).fillna(0)
+        else:
+            df_fr = pd.DataFrame(index=df_perp.index, columns=["funding_rate"]).fillna(0)
+
+        df = df_spot.join(df_perp, how="inner").join(df_fr, how="left")
+        df["basis"] = df["perp_price"] - df["spot_price"]
+        df["Ticker"] = label
+        frames.append(df.loc[args.start_date:args.end_date])
+
+    final = pd.concat(frames).reset_index().rename(columns={"index": "Date"})
+    final.to_parquet(args.output)
+    print(f"✅ Saved {len(final):,} rows to {args.output}\n")
+
+
+if __name__ == "__main__":
     main()
