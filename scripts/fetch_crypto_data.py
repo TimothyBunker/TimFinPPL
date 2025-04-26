@@ -150,10 +150,11 @@ def main():
         p_sym = p_res(p_leg)
         label = s_leg
 
-        # Spot (forward pull is fine – exchanges allow deep history)
-        s_raw = fetch_forward(spot, s_sym, start_ms, a.timeframe, a.limit)
-        print(f"🔹 {label} spot bars: {len(s_raw)}")
-        df_s = to_df(s_raw, "spot_price")
+        # Spot – use backward crawler too if user passed --backfill (OKX caps forward to 100 bars)
+        spot_fetch = fetch_backward if a.backfill else fetch_forward
+        s_raw = spot_fetch(spot, s_sym, start_ms, a.timeframe, a.limit)
+        print(f"🔹 {label} spot bars: {len(s_raw)} (mode: {'backward' if spot_fetch==fetch_backward else 'forward'})")
+        df_s = to_df(s_raw, "spot_price")(s_raw, "spot_price")
 
         # Perp: choose strategy
         perp_fetch = fetch_backward if (a.backfill or not fetch_forward(perp, p_sym, start_ms, a.timeframe, 1)) else fetch_forward
