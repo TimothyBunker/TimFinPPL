@@ -154,7 +154,7 @@ def main():
         spot_fetch = fetch_backward if a.backfill else fetch_forward
         s_raw = spot_fetch(spot, s_sym, start_ms, a.timeframe, a.limit)
         print(f"🔹 {label} spot bars: {len(s_raw)} (mode: {'backward' if spot_fetch==fetch_backward else 'forward'})")
-        df_s = to_df(s_raw, "spot_price")(s_raw, "spot_price")
+        df_s = to_df(s_raw, "spot_price")
 
         # Perp: choose strategy
         perp_fetch = fetch_backward if (a.backfill or not fetch_forward(perp, p_sym, start_ms, a.timeframe, 1)) else fetch_forward
